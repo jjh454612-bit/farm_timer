@@ -30,6 +30,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
+  int _totalSeconds = 1500;
   int _secondsRemaining = 1500;
   double _currentEarning = 0;
   double _totalMoney = 0;
@@ -42,7 +43,7 @@ class _MainScreenState extends State<MainScreen> {
   ui.Image? _firedImage;
   ui.Image? _idleImage;
 
-  String _statusMessage = "🐱 고양이가 함께 일할 준비 중...";
+  String _statusMessage = "🐱 고양이도 함께 일할 준비 중...";
 
   @override
   void initState() {
@@ -70,7 +71,6 @@ class _MainScreenState extends State<MainScreen> {
         _idleImage = f3.image;
       });
 
-      // 앱 시작하자마자 idle 애니메이션 시작
       _startIdleAnimation();
     } catch (e) {
       print("❌ 로드 실패: $e");
@@ -123,6 +123,7 @@ class _MainScreenState extends State<MainScreen> {
     setState(() {
       _appState = AppState.running;
       _currentEarning = 0;
+      _secondsRemaining = _totalSeconds;
       _statusMessage = "🐱 고양이도 열심히 일하는 중!";
     });
     _startWorkAnimation();
@@ -130,12 +131,12 @@ class _MainScreenState extends State<MainScreen> {
       setState(() {
         if (_secondsRemaining > 0) {
           _secondsRemaining--;
-          _currentEarning += 100 / 600;
+          _currentEarning += 100 / (_totalSeconds / 60 * 6);
         } else {
           _totalMoney += _currentEarning;
           _currentEarning = 0;
           _timer?.cancel();
-          _secondsRemaining = 1500;
+          _secondsRemaining = _totalSeconds;
           _statusMessage = "💰 알바 성공! 고양이가 월급을 가져왔어요!";
           _startFiredAnimation();
           _appState = AppState.firedAnimating;
@@ -163,12 +164,12 @@ class _MainScreenState extends State<MainScreen> {
       setState(() {
         if (_secondsRemaining > 0) {
           _secondsRemaining--;
-          _currentEarning += 100 / 600;
+          _currentEarning += 100 / (_totalSeconds / 60 * 6);
         } else {
           _totalMoney += _currentEarning;
           _currentEarning = 0;
           _timer?.cancel();
-          _secondsRemaining = 1500;
+          _secondsRemaining = _totalSeconds;
           _statusMessage = "💰 알바 성공! 고양이가 월급을 가져왔어요!";
           _startFiredAnimation();
           _appState = AppState.firedAnimating;
@@ -181,22 +182,86 @@ class _MainScreenState extends State<MainScreen> {
     _timer?.cancel();
     setState(() {
       _currentEarning = 0;
-      _secondsRemaining = 1500;
+      _secondsRemaining = _totalSeconds;
       _statusMessage = "😿 주인이 한눈팔아서 고양이가 실직했어요...";
-    });
-    _startFiredAnimation();
-    setState(() {
       _appState = AppState.firedAnimating;
     });
+    _startFiredAnimation();
   }
 
   void _reset() {
     setState(() {
       _appState = AppState.idle;
       _currentFrame = 0;
+      _secondsRemaining = _totalSeconds;
       _statusMessage = "🐱 고양이도 일할 준비 중...";
     });
     _startIdleAnimation();
+  }
+
+  void _showTimerPicker() {
+    // 현재 분 단위로 변환, 5분 단위로 맞춤
+    int tempMinutes = ((_totalSeconds ~/ 60) ~/ 5) * 5;
+    if (tempMinutes < 10) tempMinutes = 10;
+    if (tempMinutes > 120) tempMinutes = 120;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text("⏱ 타이머 설정"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    "$tempMinutes 분",
+                    style: const TextStyle(
+                      fontSize: 40,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Slider(
+                    min: 10,
+                    max: 120,
+                    divisions: 22,
+                    value: tempMinutes.toDouble(),
+                    label: "$tempMinutes 분",
+                    onChanged: (val) {
+                      setDialogState(() {
+                        tempMinutes = ((val / 5).round() * 5).clamp(10, 120);
+                      });
+                    },
+                  ),
+                  Text(
+                    "10분 ~ 120분 (5분 단위)",
+                    style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("취소"),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      _totalSeconds = tempMinutes * 60;
+                      _secondsRemaining = _totalSeconds;
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: const Text("확인"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   String _formatTime(int seconds) {
@@ -205,7 +270,6 @@ class _MainScreenState extends State<MainScreen> {
     return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
-  // 현재 상태에 맞는 이미지와 프레임 수
   ui.Image? get _currentImage {
     switch (_appState) {
       case AppState.fired:
@@ -229,6 +293,19 @@ class _MainScreenState extends State<MainScreen> {
       case AppState.idle:
       case AppState.paused:
         return 2;
+    }
+  }
+
+  String get _bottomText {
+    switch (_appState) {
+      case AppState.running:
+      case AppState.paused:
+        return "💵 현재 적립 중: ${_currentEarning.toInt()}원";
+      case AppState.fired:
+      case AppState.firedAnimating:
+        return "💸 모든 돈을 잃었습니다...";
+      case AppState.idle:
+        return "⏱ 타이머를 눌러 시간을 설정하세요";
     }
   }
 
@@ -271,7 +348,11 @@ class _MainScreenState extends State<MainScreen> {
       ),
       child: Text(
         label,
-        style: const TextStyle(fontSize: 22, color: Colors.white, fontWeight: FontWeight.bold),
+        style: const TextStyle(
+          fontSize: 22,
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }
@@ -286,22 +367,13 @@ class _MainScreenState extends State<MainScreen> {
       ),
       child: Text(
         label,
-        style: const TextStyle(fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold),
+        style: const TextStyle(
+          fontSize: 20,
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
-  }
-
-  String get _bottomText {
-    switch (_appState) {
-      case AppState.running:
-      case AppState.paused:
-        return "💵 현재 적립 중: ${_currentEarning.toInt()}원";
-      case AppState.fired:
-      case AppState.firedAnimating:
-        return "💸 모든 돈을 잃었습니다...";
-      case AppState.idle:
-        return "10분당 100원 적립";
-    }
   }
 
   @override
@@ -355,14 +427,21 @@ class _MainScreenState extends State<MainScreen> {
                   top: 50,
                   right: 20,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.6),
                       borderRadius: BorderRadius.circular(25),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.monetization_on, color: Colors.amber, size: 22),
+                        const Icon(
+                          Icons.monetization_on,
+                          color: Colors.amber,
+                          size: 22,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           "${_totalMoney.toInt()}원",
@@ -387,12 +466,25 @@ class _MainScreenState extends State<MainScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    _formatTime(_secondsRemaining),
-                    style: const TextStyle(
-                      fontSize: 90,
-                      fontWeight: FontWeight.w200,
-                      fontFamily: 'Courier',
+                  // idle일 때만 탭 가능, 테두리로 힌트 표시
+                  GestureDetector(
+                    onTap: _appState == AppState.idle ? _showTimerPicker : null,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        border: _appState == AppState.idle
+                            ? Border.all(color: Colors.blue[200]!, width: 2)
+                            : null,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _formatTime(_secondsRemaining),
+                        style: const TextStyle(
+                          fontSize: 90,
+                          fontWeight: FontWeight.w200,
+                          fontFamily: 'Courier',
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -427,10 +519,18 @@ class _SpritePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final frameWidth = image.width / totalFrames;
     final src = Rect.fromLTWH(
-      frame * frameWidth, 0, frameWidth, image.height.toDouble(),
+      frame * frameWidth,
+      0,
+      frameWidth,
+      image.height.toDouble(),
     );
     final dst = Rect.fromLTWH(0, 0, size.width, size.height);
-    canvas.drawImageRect(image, src, dst, Paint()..filterQuality = FilterQuality.none);
+    canvas.drawImageRect(
+      image,
+      src,
+      dst,
+      Paint()..filterQuality = FilterQuality.none,
+    );
   }
 
   @override
