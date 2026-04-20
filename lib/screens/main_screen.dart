@@ -5,6 +5,8 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import '../widgets/sprite_painter.dart';
 import '../widgets/attendance_popup.dart';
+import 'shop_screen.dart';
+import 'town_screen.dart';
 
 enum AppState { idle, running, paused, fired, firedAnimating }
 
@@ -31,7 +33,6 @@ class _MainScreenState extends State<MainScreen> {
   ui.Image? _idleImage;
 
   String _statusMessage = "🐾 함께 일할 준비 중...";
-
   int _attendanceDays = 0;
 
   @override
@@ -56,8 +57,6 @@ class _MainScreenState extends State<MainScreen> {
       if (lastDate == yesterday) {
         days = days + 1;
         if (days > 7) days = 1;
-      } else if (lastDate.isEmpty) {
-        days = 1;
       } else {
         days = 1;
       }
@@ -125,7 +124,7 @@ class _MainScreenState extends State<MainScreen> {
   void _startFiredAnimation() {
     _frameTimer?.cancel();
     _currentFrame = 0;
-    _frameTimer = Timer.periodic(const Duration(milliseconds: 400), (_) {
+    _frameTimer = Timer.periodic(const Duration(milliseconds: 600), (_) {
       setState(() {
         if (_currentFrame < 5) {
           _currentFrame++;
@@ -325,6 +324,10 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  // 선물 버튼 숨길 상태
+  bool get _showGiftButton =>
+      _appState != AppState.running && _appState != AppState.paused;
+
   Widget _buildButtons() {
     switch (_appState) {
       case AppState.idle:
@@ -388,7 +391,7 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       drawer: Drawer(
-        width: MediaQuery.of(context).size.width * 0.33,
+        width: MediaQuery.of(context).size.width * 0.4,
         child: SafeArea(
           child: Column(
             children: [
@@ -398,6 +401,28 @@ class _MainScreenState extends State<MainScreen> {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const Divider(),
+              ListTile(
+                leading: const Icon(Icons.store),
+                title: const Text("상점"),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ShopScreen()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.location_city),
+                title: const Text("마을 전경"),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const TownScreen()),
+                  );
+                },
+              ),
             ],
           ),
         ),
@@ -457,24 +482,28 @@ class _MainScreenState extends State<MainScreen> {
                     ),
                   ),
                 ),
-                // 우측 상단: 선물 버튼 + 금액
+                // 우측 상단
                 Positioned(
                   top: 50,
                   right: 20,
                   child: Row(
                     children: [
-                      GestureDetector(
-                        onTap: _showAttendancePopup,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(25),
+                      // 선물 버튼 - running/paused 때 숨김
+                      if (_showGiftButton) ...[
+                        GestureDetector(
+                          onTap: _showAttendancePopup,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.circular(25),
+                            ),
+                            child: const Text("🎁", style: TextStyle(fontSize: 20)),
                           ),
-                          child: const Text("🎁", style: TextStyle(fontSize: 20)),
                         ),
-                      ),
-                      const SizedBox(width: 8),
+                        const SizedBox(width: 8),
+                      ],
+                      // 금액 표시
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
