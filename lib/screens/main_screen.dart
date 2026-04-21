@@ -7,8 +7,7 @@ import '../widgets/sprite_painter.dart';
 import '../widgets/attendance_popup.dart';
 import 'shop_screen.dart';
 import 'town_screen.dart';
-
-enum AppState { idle, running, paused, fired, firedAnimating }
+enum AppState { idle, running, paused, fired, firedAnimating, success, successAnimating }
 
 class MainScreen extends StatefulWidget {
   final String character;
@@ -19,7 +18,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _totalSeconds = 1500;
+  int _totalSeconds = 1500; // 테스트용 1분
   int _secondsRemaining = 1500;
   double _currentEarning = 0;
   double _totalMoney = 0;
@@ -31,6 +30,7 @@ class _MainScreenState extends State<MainScreen> {
   ui.Image? _spriteImage;
   ui.Image? _firedImage;
   ui.Image? _idleImage;
+  ui.Image? _successImage;
 
   String _statusMessage = "🐾 함께 일할 준비 중...";
   int _attendanceDays = 0;
@@ -65,9 +65,7 @@ class _MainScreenState extends State<MainScreen> {
       await prefs.setInt('attendanceDays', days);
     }
 
-    setState(() {
-      _attendanceDays = days;
-    });
+    setState(() => _attendanceDays = days);
   }
 
   Future<void> _loadSprites() async {
@@ -86,10 +84,15 @@ class _MainScreenState extends State<MainScreen> {
       final codec3 = await ui.instantiateImageCodec(data3.buffer.asUint8List());
       final f3 = await codec3.getNextFrame();
 
+      final data4 = await rootBundle.load(isCat ? 'assets/successcat.png' : 'assets/successdog.png');
+      final codec4 = await ui.instantiateImageCodec(data4.buffer.asUint8List());
+      final f4 = await codec4.getNextFrame();
+
       setState(() {
         _spriteImage = f1.image;
         _firedImage = f2.image;
         _idleImage = f3.image;
+        _successImage = f4.image;
       });
 
       _startIdleAnimation();
@@ -124,13 +127,29 @@ class _MainScreenState extends State<MainScreen> {
   void _startFiredAnimation() {
     _frameTimer?.cancel();
     _currentFrame = 0;
-    _frameTimer = Timer.periodic(const Duration(milliseconds: 600), (_) {
+    _frameTimer = Timer.periodic(const Duration(milliseconds: 400), (_) {
       setState(() {
         if (_currentFrame < 5) {
           _currentFrame++;
         } else {
           _frameTimer?.cancel();
           _appState = AppState.fired;
+        }
+      });
+    });
+  }
+
+  void _startSuccessAnimation() {
+    _frameTimer?.cancel();
+    _currentFrame = 0;
+    final totalFrames = widget.character == 'cat' ? 10 : 11;
+    _frameTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
+      setState(() {
+        if (_currentFrame < totalFrames - 1) {
+          _currentFrame++;
+        } else {
+          _frameTimer?.cancel();
+          _appState = AppState.success;
         }
       });
     });
@@ -155,8 +174,8 @@ class _MainScreenState extends State<MainScreen> {
           _timer?.cancel();
           _secondsRemaining = _totalSeconds;
           _statusMessage = "💰 알바 성공! 월급을 가져왔어요!";
-          _startFiredAnimation();
-          _appState = AppState.firedAnimating;
+          _startSuccessAnimation();
+          _appState = AppState.successAnimating;
         }
       });
     });
@@ -188,8 +207,8 @@ class _MainScreenState extends State<MainScreen> {
           _timer?.cancel();
           _secondsRemaining = _totalSeconds;
           _statusMessage = "💰 알바 성공! 월급을 가져왔어요!";
-          _startFiredAnimation();
-          _appState = AppState.firedAnimating;
+          _startSuccessAnimation();
+          _appState = AppState.successAnimating;
         }
       });
     });
@@ -225,59 +244,81 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   void _showTimerPicker() {
-    int tempMinutes = ((_totalSeconds ~/ 60) ~/ 5) * 5;
-    if (tempMinutes < 10) tempMinutes = 10;
-    if (tempMinutes > 120) tempMinutes = 120;
+  int tempMinutes = (_totalSeconds ~/ 60 ~/ 5) * 5;
+  if (tempMinutes < 5) tempMinutes = 5;
 
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text("⏱ 타이머 설정"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
+  showDialog(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text("⏱ 타이머 설정"),
+        content: SizedBox(
+          height: 200,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                "$tempMinutes 분",
-                style: const TextStyle(fontSize: 40, fontWeight: FontWeight.bold),
+              SizedBox(
+                width: 80,
+                child: ListWheelScrollView.useDelegate(
+                  itemExtent: 50,
+                  perspective: 0.005,
+                  diameterRatio: 1.5,
+                  physics: const FixedExtentScrollPhysics(),
+                  controller: FixedExtentScrollController(
+                    initialItem: (tempMinutes ~/ 5) - 1,
+                  ),
+                  onSelectedItemChanged: (index) {
+                    setDialogState(() => tempMinutes = index == 0 ? 1 : index * 5);
+                  },
+                  childDelegate: ListWheelChildBuilderDelegate(
+                    childCount: 25,
+                    builder: (context, index) {
+                      final minutes = index == 0 ? 1 : index * 5;
+                      return Center(
+                        child: Text(
+                          "$minutes",
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: tempMinutes == minutes
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            color: tempMinutes == minutes
+                                ? Colors.black
+                                : Colors.grey[400],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
               ),
-              const SizedBox(height: 8),
-              Slider(
-                min: 10,
-                max: 120,
-                divisions: 22,
-                value: tempMinutes.toDouble(),
-                label: "$tempMinutes 분",
-                onChanged: (val) => setDialogState(() {
-                  tempMinutes = ((val / 5).round() * 5).clamp(10, 120);
-                }),
-              ),
-              Text(
-                "10분 ~ 120분 (5분 단위)",
-                style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+              const Text(
+                "분",
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("취소"),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                setState(() {
-                  _totalSeconds = tempMinutes * 60;
-                  _secondsRemaining = _totalSeconds;
-                });
-                Navigator.pop(context);
-              },
-              child: const Text("확인"),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("취소"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                _totalSeconds = tempMinutes * 60;
+                _secondsRemaining = _totalSeconds;
+              });
+              Navigator.pop(context);
+            },
+            child: const Text("확인"),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   String _formatTime(int seconds) {
     int m = seconds ~/ 60;
@@ -290,6 +331,9 @@ class _MainScreenState extends State<MainScreen> {
       case AppState.fired:
       case AppState.firedAnimating:
         return _firedImage;
+      case AppState.success:
+      case AppState.successAnimating:
+        return _successImage;
       case AppState.running:
         return _spriteImage;
       case AppState.idle:
@@ -303,6 +347,9 @@ class _MainScreenState extends State<MainScreen> {
       case AppState.fired:
       case AppState.firedAnimating:
         return 6;
+      case AppState.success:
+      case AppState.successAnimating:
+        return widget.character == 'cat' ? 10 : 11;
       case AppState.running:
         return widget.character == 'cat' ? 4 : 7;
       case AppState.idle:
@@ -319,12 +366,14 @@ class _MainScreenState extends State<MainScreen> {
       case AppState.fired:
       case AppState.firedAnimating:
         return "💸 모든 돈을 잃었습니다...";
+      case AppState.success:
+      case AppState.successAnimating:
+        return "🎉 수고했어요!";
       case AppState.idle:
         return "⏱ 타이머를 눌러 시간을 설정하세요";
     }
   }
 
-  // 선물 버튼 숨길 상태
   bool get _showGiftButton =>
       _appState != AppState.running && _appState != AppState.paused;
 
@@ -351,8 +400,10 @@ class _MainScreenState extends State<MainScreen> {
           ],
         );
       case AppState.firedAnimating:
+      case AppState.successAnimating:
         return const SizedBox();
       case AppState.fired:
+      case AppState.success:
         return _singleButton("다시 집중하기", Colors.green[600]!, _reset);
     }
   }
@@ -402,27 +453,27 @@ class _MainScreenState extends State<MainScreen> {
               ),
               const Divider(),
               ListTile(
-                leading: const Icon(Icons.store),
-                title: const Text("상점"),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const ShopScreen()),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.location_city),
-                title: const Text("마을 전경"),
-                onTap: () {
-                  Navigator.pop(context);
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const TownScreen()),
-                  );
-                },
-              ),
+  leading: const Icon(Icons.store),
+  title: const Text("상점"),
+  onTap: () {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ShopScreen()),
+    );
+  },
+),
+ListTile(
+  leading: const Icon(Icons.location_city),
+  title: const Text("마을 전경"),
+  onTap: () {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const TownScreen()),
+    );
+  },
+),
             ],
           ),
         ),
@@ -471,7 +522,6 @@ class _MainScreenState extends State<MainScreen> {
                     ),
                   ),
                 ),
-                // 햄버거 메뉴
                 Positioned(
                   top: 50,
                   left: 16,
@@ -482,13 +532,11 @@ class _MainScreenState extends State<MainScreen> {
                     ),
                   ),
                 ),
-                // 우측 상단
                 Positioned(
                   top: 50,
                   right: 20,
                   child: Row(
                     children: [
-                      // 선물 버튼 - running/paused 때 숨김
                       if (_showGiftButton) ...[
                         GestureDetector(
                           onTap: _showAttendancePopup,
@@ -503,7 +551,6 @@ class _MainScreenState extends State<MainScreen> {
                         ),
                         const SizedBox(width: 8),
                       ],
-                      // 금액 표시
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
