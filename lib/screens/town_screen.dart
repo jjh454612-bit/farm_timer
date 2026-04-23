@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:async';
-import 'dart:math';
 import 'dart:ui' as ui;
 
 class TownScreen extends StatefulWidget {
@@ -11,407 +9,437 @@ class TownScreen extends StatefulWidget {
   State<TownScreen> createState() => _TownScreenState();
 }
 
-class RoadData {
-  double x;
-  double y;
-  bool isRotated;
-  String type;
-
-  RoadData({required this.x, required this.y, this.isRotated = false, this.type = 'asphalt'});
-}
-
-class GrassData {
-  final double x;
-  final double y;
-  final int type;
-
-  GrassData({required this.x, required this.y, required this.type});
-}
-
-class _TownScreenState extends State<TownScreen> {
+class _TownScreenState extends State<TownScreen>
+    with TickerProviderStateMixin {
   ui.Image? _groundImage;
-  ui.Image? _asphaltImage;
-  ui.Image? _dirtImage;
-  ui.Image? _grass1Image;
-  ui.Image? _grass2Image;
-  ui.Image? _grass3Image;
-  ui.Image? _grass4Image;
+  ui.Image? _carImage;
+  ui.Image? _carFlipImage;
+  final Map<String, ui.Image?> _buildingImages = {};
+  final Map<int, String> _placedBuildings = {};
+  final Set<int> _rotatedTiles = {};
+  String? _selectedBuilding;
 
-  int _grassFrame = 0;
-  Timer? _grassTimer;
+  int? _previewTile;
+  bool _previewRotated = false;
 
-  List<RoadData> _roads = [];
-  List<GrassData> _grasses = [];
+  static const double _groundScale = 2.0;
+  static const double _buildingScale = 3.0;
+  static const double _tileScale = 3.0;
+  static const double _carScale = 1.0;
 
-  String? _selectedItem;
-  double? _dragX;
-  double? _dragY;
-  bool _dragIsRotated = false;
-  bool _showGrid = false;
+  static const double _groundW = 256 * _groundScale;
+  static const double _groundH = 148 * _groundScale;
+  static const double _extraH = 100;
 
-  static const double groundSize = 256;
-  static const double roadW = 9;
-  static const double roadH = 64;
+  static List<Offset> get _tileAnchors => [
+    Offset(258, 55 + _extraH),
+    Offset(110, 128 + _extraH),
+    Offset(400, 128 + _extraH),
+    Offset(256, 199 + _extraH),
+  ];
+
+  double get _bw => 64 * _buildingScale;
+  double get _bh => 64 * _buildingScale;
+  double get _th => 32 * _tileScale;
+  double get _carSize => 32 * _carScale;
+
+  late AnimationController _carController;
+  late Animation<Offset> _carAnim;
+  late AnimationController _carFlipController;
+  late Animation<Offset> _carFlipAnim;
+
+  final TransformationController _transformController =
+      TransformationController();
 
   @override
   void initState() {
     super.initState();
     _loadImages();
-    _generateGrass();
-  }
 
-  void _generateGrass() {
-    final random = Random();
-    _grasses = List.generate(30, (i) => GrassData(
-      x: random.nextDouble() * (groundSize - 16),
-      y: random.nextDouble() * (groundSize - 16),
-      type: random.nextInt(4),
+    _carController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 16),
+    )..repeat();
+    _carAnim = Tween<Offset>(
+      begin: Offset(400, 180 + _extraH),
+      end: Offset(130, 50 + _extraH),
+    ).animate(CurvedAnimation(
+      parent: _carController,
+      curve: Curves.linear,
     ));
-  }
 
-  Future<ui.Image> _loadImage(String path) async {
-    final data = await rootBundle.load(path);
-    final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
-    final frame = await codec.getNextFrame();
-    return frame.image;
-  }
-
-  Future<void> _loadImages() async {
-    try {
-      _groundImage = await _loadImage('assets/ground.png');
-      _asphaltImage = await _loadImage('assets/asphaltroad.png');
-      _dirtImage = await _loadImage('assets/dirtroad.png');
-      _grass1Image = await _loadImage('assets/grass1.png');
-      _grass2Image = await _loadImage('assets/grass2.png');
-      _grass3Image = await _loadImage('assets/grass3.png');
-      _grass4Image = await _loadImage('assets/grass4.png');
-
-      setState(() {});
-
-      _grassTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
-        setState(() => _grassFrame = (_grassFrame + 1) % 4);
-      });
-    } catch (e) {
-      print("❌ 로드 실패: $e");
-    }
+    _carFlipController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 16),
+    )..repeat();
+    _carFlipAnim = TweenSequence<Offset>([
+      TweenSequenceItem(
+        tween: Tween(
+          begin: Offset(160, 180 + _extraH),
+          end: Offset(226, 146 + _extraH),
+        ),
+        weight: 40,
+      ),
+      TweenSequenceItem(
+        tween: ConstantTween(Offset(226, 146 + _extraH)),
+        weight: 20,
+      ),
+      TweenSequenceItem(
+        tween: Tween(
+          begin: Offset(226, 146 + _extraH),
+          end: Offset(400, 60 + _extraH),
+        ),
+        weight: 40,
+      ),
+    ]).animate(CurvedAnimation(
+      parent: _carFlipController,
+      curve: Curves.linear,
+    ));
   }
 
   @override
   void dispose() {
-    _grassTimer?.cancel();
+    _carController.dispose();
+    _carFlipController.dispose();
+    _transformController.dispose();
     super.dispose();
   }
 
-  double get _currentW => _dragIsRotated ? roadH : roadW;
-  double get _currentH => _dragIsRotated ? roadW : roadH;
-
-  bool get _isValidPlacement {
-    if (_dragX == null || _dragY == null) return false;
-    return _dragX! >= 0 &&
-        _dragY! >= 0 &&
-        _dragX! + _currentW <= groundSize &&
-        _dragY! + _currentH <= groundSize;
+  Future<ui.Image> _loadImg(String path) async {
+    final data = await rootBundle.load(path);
+    final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
+    return (await codec.getNextFrame()).image;
   }
 
-  void _updateDrag(Offset localPos) {
-    setState(() {
-      _showGrid = true;
-      _dragX = (localPos.dx - _currentW / 2).floorToDouble().clamp(0.0, groundSize - _currentW);
-      _dragY = (localPos.dy - _currentH / 2).floorToDouble().clamp(0.0, groundSize - _currentH);
-    });
-  }
-
-  void _cancelPlacement() {
-    setState(() {
-      _dragX = null;
-      _dragY = null;
-      _showGrid = false;
-      _dragIsRotated = false;
-      _selectedItem = null;
-    });
-  }
-
-  void _confirmPlacement() {
-    if (!_isValidPlacement || _selectedItem == null) return;
-    setState(() {
-      _roads.add(RoadData(
-        x: _dragX!,
-        y: _dragY!,
-        type: _selectedItem!,
-        isRotated: _dragIsRotated,
-      ));
-      _dragX = null;
-      _dragY = null;
-      _showGrid = false;
-      _dragIsRotated = false;
-      _selectedItem = null;
-    });
-  }
-
-  void _rotateDrag() {
-    setState(() => _dragIsRotated = !_dragIsRotated);
-  }
-
-  ui.Image? _getGrassImage(int type) {
-    switch (type) {
-      case 0: return _grass1Image;
-      case 1: return _grass2Image;
-      case 2: return _grass3Image;
-      case 3: return _grass4Image;
-      default: return _grass1Image;
+  Future<void> _loadImages() async {
+    try {
+      _groundImage = await _loadImg('assets/ground.png');
+      _carImage = await _loadImg('assets/car.png');
+      _carFlipImage = await _loadImg('assets/car1-1.png');
+      _buildingImages['house'] = await _loadImg('assets/house1.png');
+      _buildingImages['house-1'] = await _loadImg('assets/house1-1.png');
+      _buildingImages['park'] = await _loadImg('assets/park.png');
+      _buildingImages['park-1'] = await _loadImg('assets/park1-1.png');
+      _buildingImages['police'] = await _loadImg('assets/police.png');
+      _buildingImages['police-1'] = await _loadImg('assets/police1-1.png');
+      setState(() {});
+    } catch (e) {
+      debugPrint("❌ 로드 실패: $e");
     }
   }
 
-  ui.Image? _getRoadImage(String type) {
-    return type == 'asphalt' ? _asphaltImage : _dirtImage;
+  bool _isOnGround(Offset pos) {
+    return pos.dx >= 0 &&
+        pos.dx <= _groundW &&
+        pos.dy >= _extraH &&
+        pos.dy <= _groundH + _extraH;
+  }
+
+  String _getBuildingKey(int idx) {
+    final type = _placedBuildings[idx]!;
+    return _rotatedTiles.contains(idx) ? '$type-1' : type;
+  }
+
+  String _getPreviewKey() {
+    return _previewRotated ? '$_selectedBuilding-1' : _selectedBuilding!;
+  }
+
+  void _onTileTap(int idx) {
+    if (_selectedBuilding == null) return;
+    if (_previewTile == idx) return;
+    setState(() {
+      _previewTile = idx;
+      _previewRotated = false;
+    });
+  }
+
+  void _confirmPlace() {
+    if (_previewTile == null || _selectedBuilding == null) return;
+    setState(() {
+      _placedBuildings[_previewTile!] = _selectedBuilding!;
+      if (_previewRotated) {
+        _rotatedTiles.add(_previewTile!);
+      } else {
+        _rotatedTiles.remove(_previewTile!);
+      }
+      _previewTile = null;
+      _previewRotated = false;
+      _selectedBuilding = null;
+    });
+  }
+
+  void _cancelPlace() {
+    setState(() {
+      _previewTile = null;
+      _previewRotated = false;
+    });
+  }
+
+  void _rotatePreview() {
+    setState(() {
+      _previewRotated = !_previewRotated;
+    });
+  }
+
+  Widget _buildCar(Offset pos, ui.Image image) {
+    return Positioned(
+      left: pos.dx - _carSize / 2,
+      top: pos.dy - _carSize / 2,
+      child: CustomPaint(
+        painter: _TilePainter(image: image),
+        size: Size(_carSize, _carSize),
+      ),
+    );
+  }
+
+  void _resetView() {
+    _transformController.value = Matrix4.identity();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isPlacing = _dragX != null && _dragY != null && _selectedItem != null;
-
     return Scaffold(
-      appBar: AppBar(title: const Text("🏘 마을 전경")),
-      body: Stack(
+      appBar: AppBar(
+        title: const Text("🏘 마을 전경"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.center_focus_strong),
+            tooltip: '뷰 초기화',
+            onPressed: _resetView,
+          ),
+        ],
+      ),
+      body: Column(
         children: [
-          Column(
-            children: [
-              Expanded(
-                flex: 6,
-                child: _groundImage == null
-                    ? const Center(child: CircularProgressIndicator())
-                    : InteractiveViewer(
-                        boundaryMargin: const EdgeInsets.all(200),
-                        minScale: 0.5,
-                        maxScale: 3.0,
-                        panEnabled: !isPlacing,
-                        scaleEnabled: true,
-                        child: Center(
-                          child: Transform(
-                            alignment: Alignment.center,
-                            transform: Matrix4.identity()
-                              ..setEntry(3, 2, 0.001)
-                              ..rotateX(-1.0),
-                            child: GestureDetector(
-                              onPanStart: _selectedItem != null
-                                  ? (d) => _updateDrag(d.localPosition)
-                                  : null,
-                              onPanUpdate: _selectedItem != null
-                                  ? (d) => _updateDrag(d.localPosition)
-                                  : null,
-                              child: SizedBox(
-                                width: groundSize,
-                                height: groundSize,
-                                child: Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    // 바닥
-                                    CustomPaint(
-                                      painter: _TilePainter(image: _groundImage!),
-                                      size: const Size(groundSize, groundSize),
-                                    ),
-                                    // 풀들
-                                    for (final grass in _grasses)
-                                      if (_getGrassImage(grass.type) != null)
-                                        Positioned(
-                                          left: grass.x,
-                                          top: grass.y,
-                                          child: CustomPaint(
-                                            painter: _SpritePainter(
-                                              image: _getGrassImage(grass.type)!,
-                                              frame: _grassFrame,
-                                              totalFrames: 4,
-                                            ),
-                                            size: const Size(16, 16),
-                                          ),
-                                        ),
-                                    // 그리드
-                                    if (_showGrid)
-                                      CustomPaint(
-                                        painter: _GridPainter(groundSize: groundSize),
-                                        size: const Size(groundSize, groundSize),
-                                      ),
-                                    // 배치된 도로들
-                                    for (final road in _roads)
-                                      Positioned(
-                                        left: road.x,
-                                        top: road.y,
-                                        child: _getRoadImage(road.type) != null
-                                            ? CustomPaint(
-                                                painter: _TilePainter(
-                                                  image: _getRoadImage(road.type)!,
-                                                ),
-                                                size: road.isRotated
-                                                    ? const Size(roadH, roadW)
-                                                    : const Size(roadW, roadH),
-                                              )
-                                            : const SizedBox(),
-                                      ),
-                                    // 드래그 미리보기
-                                    if (isPlacing)
-                                      Positioned(
-                                        left: _dragX!,
-                                        top: _dragY!,
-                                        child: Opacity(
-                                          opacity: 0.6,
-                                          child: _getRoadImage(_selectedItem!) != null
-                                              ? CustomPaint(
-                                                  painter: _TilePainter(
-                                                    image: _getRoadImage(_selectedItem!)!,
-                                                  ),
-                                                  size: Size(_currentW, _currentH),
-                                                )
-                                              : const SizedBox(),
-                                        ),
-                                      ),
-                                  ],
+          Expanded(
+            flex: 6,
+            child: _groundImage == null
+                ? const Center(child: CircularProgressIndicator())
+                : InteractiveViewer(
+                    transformationController: _transformController,
+                    minScale: 0.5,
+                    maxScale: 5.0,
+                    boundaryMargin: const EdgeInsets.all(200),
+                    child: Center(
+                      child: FittedBox(
+                        fit: BoxFit.contain,
+                        child: SizedBox(
+                          width: _groundW,
+                          height: _groundH + _extraH,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              Positioned(
+                                top: _extraH,
+                                child: CustomPaint(
+                                  painter: _TilePainter(image: _groundImage!),
+                                  size: const Size(_groundW, _groundH),
                                 ),
                               ),
-                            ),
+                              AnimatedBuilder(
+                                animation: Listenable.merge(
+                                    [_carAnim, _carFlipAnim]),
+                                builder: (context, _) {
+                                  final carPos = _carAnim.value;
+                                  final carFlipPos = _carFlipAnim.value;
+                                  final sorted = List.generate(4, (i) => i)
+                                    ..sort((a, b) => _tileAnchors[a]
+                                        .dy
+                                        .compareTo(_tileAnchors[b].dy));
+
+                                  bool carDrawn = false;
+                                  bool carFlipDrawn = false;
+                                  final widgets = <Widget>[];
+
+                                  for (final idx in sorted) {
+                                    if (!carDrawn &&
+                                        carPos.dy < _tileAnchors[idx].dy) {
+                                      carDrawn = true;
+                                      if (_carImage != null && _isOnGround(carPos))
+                                        widgets.add(_buildCar(carPos, _carImage!));
+                                    }
+                                    if (!carFlipDrawn &&
+                                        carFlipPos.dy < _tileAnchors[idx].dy) {
+                                      carFlipDrawn = true;
+                                      if (_carFlipImage != null && _isOnGround(carFlipPos))
+                                        widgets.add(_buildCar(carFlipPos, _carFlipImage!));
+                                    }
+
+                                    if (_selectedBuilding != null &&
+                                        _previewTile != idx)
+                                      widgets.add(Positioned(
+                                        left: _tileAnchors[idx].dx - _bw / 2,
+                                        top: _tileAnchors[idx].dy - _th / 2,
+                                        child: GestureDetector(
+                                          onTap: () => _onTileTap(idx),
+                                          child: CustomPaint(
+                                            painter: _HighlightPainter(
+                                              filled: _placedBuildings.containsKey(idx),
+                                            ),
+                                            size: Size(_bw, _th),
+                                          ),
+                                        ),
+                                      ));
+
+                                    if (_previewTile != idx &&
+                                        _placedBuildings.containsKey(idx) &&
+                                        _buildingImages[_getBuildingKey(idx)] != null)
+                                      widgets.add(Positioned(
+                                        left: _tileAnchors[idx].dx - _bw / 2,
+                                        top: _tileAnchors[idx].dy - _bh + _th / 2,
+                                        child: CustomPaint(
+                                          painter: _TilePainter(
+                                            image: _buildingImages[_getBuildingKey(idx)]!,
+                                          ),
+                                          size: Size(_bw, _bh),
+                                        ),
+                                      ));
+
+                                    if (_previewTile == idx &&
+                                        _selectedBuilding != null &&
+                                        _buildingImages[_getPreviewKey()] != null)
+                                      widgets.add(Positioned(
+                                        left: _tileAnchors[idx].dx - _bw / 2,
+                                        top: _tileAnchors[idx].dy - _bh + _th / 2,
+                                        child: Opacity(
+                                          opacity: 0.5,
+                                          child: CustomPaint(
+                                            painter: _TilePainter(
+                                              image: _buildingImages[_getPreviewKey()]!,
+                                            ),
+                                            size: Size(_bw, _bh),
+                                          ),
+                                        ),
+                                      ));
+                                  }
+
+                                  if (!carDrawn && _carImage != null && _isOnGround(carPos))
+                                    widgets.add(_buildCar(carPos, _carImage!));
+                                  if (!carFlipDrawn && _carFlipImage != null && _isOnGround(carFlipPos))
+                                    widgets.add(_buildCar(carFlipPos, _carFlipImage!));
+
+                                  // 액션 버튼 항상 맨 위에
+                                  if (_previewTile != null)
+                                    widgets.add(Positioned(
+                                      left: _tileAnchors[_previewTile!].dx - 48,
+                                      top: _tileAnchors[_previewTile!].dy + _th / 2 + 4,
+                                      child: Row(
+                                        children: [
+                                          _actionBtn(
+                                            icon: Icons.check,
+                                            color: Colors.green,
+                                            onTap: _confirmPlace,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          _actionBtn(
+                                            icon: Icons.rotate_right,
+                                            color: Colors.blue,
+                                            onTap: _rotatePreview,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          _actionBtn(
+                                            icon: Icons.close,
+                                            color: Colors.red,
+                                            onTap: _cancelPlace,
+                                          ),
+                                        ],
+                                      ),
+                                    ));
+
+                                  return Stack(children: widgets);
+                                },
+                              ),
+                            ],
                           ),
                         ),
                       ),
-              ),
-              // 하단 아이템
-              Expanded(
-                flex: 4,
-                child: Container(
-                  color: Colors.brown[100],
-                  child: Column(
+                    ),
+                  ),
+          ),
+          Expanded(
+            flex: 4,
+            child: Container(
+              color: Colors.brown[100],
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+                  const Text(
+                    "건물 선택",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  if (_selectedBuilding != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        "타일을 탭해서 배치하세요!",
+                        style: TextStyle(fontSize: 12, color: Colors.blue[600]),
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const SizedBox(height: 12),
-                      const Text(
-                        "아이템",
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _buildItemButton(
-                            label: "아스팔트",
-                            emoji: "🛣️",
-                            isSelected: _selectedItem == 'asphalt',
-                            onTap: () => setState(() {
-                              _selectedItem = _selectedItem == 'asphalt' ? null : 'asphalt';
-                              _showGrid = false;
-                              _dragX = null;
-                              _dragY = null;
-                            }),
-                          ),
-                          const SizedBox(width: 12),
-                          _buildItemButton(
-                            label: "흙길",
-                            emoji: "🟫",
-                            isSelected: _selectedItem == 'dirt',
-                            onTap: () => setState(() {
-                              _selectedItem = _selectedItem == 'dirt' ? null : 'dirt';
-                              _showGrid = false;
-                              _dragX = null;
-                              _dragY = null;
-                            }),
-                          ),
-                        ],
-                      ),
-                      if (_selectedItem != null)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 12),
-                          child: Text(
-                            "땅 위에 드래그해서 위치를 잡아주세요!",
-                            style: TextStyle(fontSize: 13, color: Colors.blue),
-                          ),
-                        ),
+                      _buildItemBtn('house', '🏠', '집'),
+                      const SizedBox(width: 12),
+                      _buildItemBtn('park', '🌳', '공원'),
+                      const SizedBox(width: 12),
+                      _buildItemBtn('police', '🚔', '경찰서'),
                     ],
                   ),
-                ),
-              ),
-            ],
-          ),
-          // 배치 버튼들 - Transform 밖에 고정
-          if (isPlacing)
-            Positioned(
-              bottom: MediaQuery.of(context).size.height * 0.42,
-              left: 0,
-              right: 0,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // 회전 버튼
-                  GestureDetector(
-                    onTap: _rotateDrag,
-                    child: Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.grey),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 4,
-                          ),
-                        ],
-                      ),
-                      child: const Icon(Icons.rotate_right, size: 28),
+                  if (_selectedBuilding != null) ...[
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _selectedBuilding = null;
+                        _previewTile = null;
+                        _previewRotated = false;
+                      }),
+                      child: const Text("선택 취소"),
                     ),
-                  ),
-                  const SizedBox(width: 20),
-                  // 체크 버튼
-                  GestureDetector(
-                    onTap: _isValidPlacement ? _confirmPlacement : null,
-                    child: Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: _isValidPlacement ? Colors.green : Colors.grey,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 4,
-                          ),
-                        ],
-                      ),
-                      child: const Icon(Icons.check, size: 28, color: Colors.white),
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  // X 버튼
-                  GestureDetector(
-                    onTap: _cancelPlacement,
-                    child: Container(
-                      width: 50,
-                      height: 50,
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 4,
-                          ),
-                        ],
-                      ),
-                      child: const Icon(Icons.close, size: 28, color: Colors.white),
-                    ),
-                  ),
+                  ],
                 ],
               ),
             ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildItemButton({
-    required String label,
-    required String emoji,
-    required bool isSelected,
+  Widget _actionBtn({
+    required IconData icon,
+    required Color color,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(icon, color: Colors.white, size: 18),
+      ),
+    );
+  }
+
+  Widget _buildItemBtn(String id, String emoji, String label) {
+    final isSelected = _selectedBuilding == id;
+    return GestureDetector(
+      onTap: () => setState(() {
+        _selectedBuilding = isSelected ? null : id;
+        _previewTile = null;
+        _previewRotated = false;
+      }),
       child: Container(
         width: 70,
         height: 70,
@@ -435,26 +463,8 @@ class _TownScreenState extends State<TownScreen> {
   }
 }
 
-class _GridPainter extends CustomPainter {
-  final double groundSize;
-
-  _GridPainter({required this.groundSize});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.2)
-      ..strokeWidth = 0.5
-      ..style = PaintingStyle.stroke;
-
-    for (int i = 0; i <= groundSize; i++) {
-      canvas.drawLine(Offset(i.toDouble(), 0), Offset(i.toDouble(), groundSize), paint);
-      canvas.drawLine(Offset(0, i.toDouble()), Offset(groundSize, i.toDouble()), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_GridPainter old) => false;
+extension WidgetLet on Widget {
+  T let<T>(T Function(Widget) block) => block(this);
 }
 
 class _TilePainter extends CustomPainter {
@@ -463,34 +473,47 @@ class _TilePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final src = Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
-    final dst = Rect.fromLTWH(0, 0, size.width, size.height);
-    canvas.drawImageRect(image, src, dst, Paint()..filterQuality = FilterQuality.none);
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+      Rect.fromLTWH(0, 0, size.width, size.height),
+      Paint()..filterQuality = FilterQuality.none,
+    );
   }
 
   @override
   bool shouldRepaint(_TilePainter old) => old.image != image;
 }
 
-class _SpritePainter extends CustomPainter {
-  final ui.Image image;
-  final int frame;
-  final int totalFrames;
-
-  _SpritePainter({
-    required this.image,
-    required this.frame,
-    required this.totalFrames,
-  });
+class _HighlightPainter extends CustomPainter {
+  final bool filled;
+  _HighlightPainter({this.filled = false});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final frameWidth = image.width / totalFrames;
-    final src = Rect.fromLTWH(frame * frameWidth, 0, frameWidth, image.height.toDouble());
-    final dst = Rect.fromLTWH(0, 0, size.width, size.height);
-    canvas.drawImageRect(image, src, dst, Paint()..filterQuality = FilterQuality.none);
+    final path = Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(size.width, size.height / 2)
+      ..lineTo(size.width / 2, size.height)
+      ..lineTo(0, size.height / 2)
+      ..close();
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color =
+            (filled ? Colors.green : Colors.yellow).withValues(alpha: 0.4)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = filled ? Colors.green[700]! : Colors.yellow[700]!
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
   }
 
   @override
-  bool shouldRepaint(_SpritePainter old) => old.frame != frame;
+  bool shouldRepaint(_HighlightPainter old) => old.filled != filled;
 }
