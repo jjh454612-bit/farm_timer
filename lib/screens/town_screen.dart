@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
+import '../providers/game_provider.dart';
 
 class TownScreen extends StatefulWidget {
   const TownScreen({super.key});
@@ -42,6 +44,13 @@ class _TownScreenState extends State<TownScreen>
   double get _bh => 64 * _buildingScale;
   double get _th => 32 * _tileScale;
   double get _carSize => 32 * _carScale;
+
+  static const Map<String, Map<String, String>> _buildingInfo = {
+    'house':    {'emoji': '🏠', 'label': '집'},
+    'park':     {'emoji': '🌳', 'label': '공원'},
+    'police':   {'emoji': '🚔', 'label': '경찰서'},
+    'hospital': {'emoji': '🏥', 'label': '병원'},
+  };
 
   late AnimationController _carController;
   late Animation<Offset> _carAnim;
@@ -122,6 +131,8 @@ class _TownScreenState extends State<TownScreen>
       _buildingImages['park-1'] = await _loadImg('assets/park1-1.png');
       _buildingImages['police'] = await _loadImg('assets/police.png');
       _buildingImages['police-1'] = await _loadImg('assets/police1-1.png');
+      _buildingImages['hospital'] = await _loadImg('assets/hospital.png');
+      _buildingImages['hospital-1'] = await _loadImg('assets/hospital1-1.png');
       setState(() {});
     } catch (e) {
       debugPrint("❌ 로드 실패: $e");
@@ -198,6 +209,8 @@ class _TownScreenState extends State<TownScreen>
 
   @override
   Widget build(BuildContext context) {
+    final ownedBuildings = context.watch<GameProvider>().ownedBuildings;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("🏘 마을 전경"),
@@ -255,18 +268,20 @@ class _TownScreenState extends State<TownScreen>
                                     if (!carDrawn &&
                                         carPos.dy < _tileAnchors[idx].dy) {
                                       carDrawn = true;
-                                      if (_carImage != null && _isOnGround(carPos))
+                                      if (_carImage != null && _isOnGround(carPos)) {
                                         widgets.add(_buildCar(carPos, _carImage!));
+                                      }
                                     }
                                     if (!carFlipDrawn &&
                                         carFlipPos.dy < _tileAnchors[idx].dy) {
                                       carFlipDrawn = true;
-                                      if (_carFlipImage != null && _isOnGround(carFlipPos))
+                                      if (_carFlipImage != null && _isOnGround(carFlipPos)) {
                                         widgets.add(_buildCar(carFlipPos, _carFlipImage!));
+                                      }
                                     }
 
                                     if (_selectedBuilding != null &&
-                                        _previewTile != idx)
+                                        _previewTile != idx) {
                                       widgets.add(Positioned(
                                         left: _tileAnchors[idx].dx - _bw / 2,
                                         top: _tileAnchors[idx].dy - _th / 2,
@@ -280,10 +295,11 @@ class _TownScreenState extends State<TownScreen>
                                           ),
                                         ),
                                       ));
+                                    }
 
                                     if (_previewTile != idx &&
                                         _placedBuildings.containsKey(idx) &&
-                                        _buildingImages[_getBuildingKey(idx)] != null)
+                                        _buildingImages[_getBuildingKey(idx)] != null) {
                                       widgets.add(Positioned(
                                         left: _tileAnchors[idx].dx - _bw / 2,
                                         top: _tileAnchors[idx].dy - _bh + _th / 2,
@@ -294,10 +310,11 @@ class _TownScreenState extends State<TownScreen>
                                           size: Size(_bw, _bh),
                                         ),
                                       ));
+                                    }
 
                                     if (_previewTile == idx &&
                                         _selectedBuilding != null &&
-                                        _buildingImages[_getPreviewKey()] != null)
+                                        _buildingImages[_getPreviewKey()] != null) {
                                       widgets.add(Positioned(
                                         left: _tileAnchors[idx].dx - _bw / 2,
                                         top: _tileAnchors[idx].dy - _bh + _th / 2,
@@ -311,15 +328,17 @@ class _TownScreenState extends State<TownScreen>
                                           ),
                                         ),
                                       ));
+                                    }
                                   }
 
-                                  if (!carDrawn && _carImage != null && _isOnGround(carPos))
+                                  if (!carDrawn && _carImage != null && _isOnGround(carPos)) {
                                     widgets.add(_buildCar(carPos, _carImage!));
-                                  if (!carFlipDrawn && _carFlipImage != null && _isOnGround(carFlipPos))
+                                  }
+                                  if (!carFlipDrawn && _carFlipImage != null && _isOnGround(carFlipPos)) {
                                     widgets.add(_buildCar(carFlipPos, _carFlipImage!));
+                                  }
 
-                                  // 액션 버튼 항상 맨 위에
-                                  if (_previewTile != null)
+                                  if (_previewTile != null) {
                                     widgets.add(Positioned(
                                       left: _tileAnchors[_previewTile!].dx - 48,
                                       top: _tileAnchors[_previewTile!].dy + _th / 2 + 4,
@@ -345,6 +364,7 @@ class _TownScreenState extends State<TownScreen>
                                         ],
                                       ),
                                     ));
+                                  }
 
                                   return Stack(children: widgets);
                                 },
@@ -359,10 +379,11 @@ class _TownScreenState extends State<TownScreen>
           Expanded(
             flex: 4,
             child: Container(
+              width: double.infinity,
               color: Colors.brown[100],
               child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const SizedBox(height: 12),
                   const Text(
                     "건물 선택",
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -376,16 +397,32 @@ class _TownScreenState extends State<TownScreen>
                       ),
                     ),
                   const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _buildItemBtn('house', '🏠', '집'),
-                      const SizedBox(width: 12),
-                      _buildItemBtn('park', '🌳', '공원'),
-                      const SizedBox(width: 12),
-                      _buildItemBtn('police', '🚔', '경찰서'),
-                    ],
-                  ),
+                  ownedBuildings.isEmpty
+                      ? Text(
+                          "상점에서 건물을 구매하세요!",
+                          style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                        )
+                      : Scrollbar(
+                          thumbVisibility: true,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                            child: Row(
+                              children: ownedBuildings.map((id) {
+                                final info = _buildingInfo[id];
+                                if (info == null) return const SizedBox();
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 12),
+                                  child: _buildItemBtn(
+                                    id,
+                                    info['emoji']!,
+                                    info['label']!,
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ),
                   if (_selectedBuilding != null) ...[
                     const SizedBox(height: 16),
                     TextButton(

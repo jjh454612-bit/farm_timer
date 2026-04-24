@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
 import '../widgets/sprite_painter.dart';
+import '../providers/game_provider.dart';
 import 'main_screen.dart';
 
 class CharacterSelectScreen extends StatefulWidget {
@@ -48,7 +50,7 @@ class _CharacterSelectScreenState extends State<CharacterSelectScreen> {
         });
       });
     } catch (e) {
-      print("❌ 로드 실패: $e");
+      debugPrint("❌ 로드 실패: $e");
     }
   }
 
@@ -76,6 +78,7 @@ class _CharacterSelectScreenState extends State<CharacterSelectScreen> {
           ),
           ElevatedButton(
             onPressed: () {
+              context.read<GameProvider>().setCharacter(_selected!); // ← 추가
               Navigator.pop(context);
               _frameTimer?.cancel();
               Navigator.pushReplacement(

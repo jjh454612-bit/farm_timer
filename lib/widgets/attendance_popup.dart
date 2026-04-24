@@ -109,7 +109,7 @@ class AttendancePopup extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              "현재 ${attendanceDays}일 출석 중!",
+              "현재 $attendanceDays일 출석 중!",
               style: TextStyle(
                 fontSize: 14,
                 color: Colors.blue[600],
