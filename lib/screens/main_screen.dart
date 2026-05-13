@@ -25,54 +25,52 @@ class _MainScreenState extends State<MainScreen> {
   // ──────────────────────────────────────────
   // 타이머 관련
   // ──────────────────────────────────────────
-  int _totalSeconds = 1500;       // 총 타이머 시간 (초)
-  int _secondsRemaining = 1500;   // 남은 시간 (초)
-  double _currentEarning = 0;     // 현재 회차 적립 중인 돈
-  Timer? _timer;                  // 타이머
-  Timer? _frameTimer;             // 스프라이트 애니메이션 타이머
+  int _totalSeconds = 1500;
+  int _secondsRemaining = 1500;
+  double _currentEarning = 0;
+  Timer? _timer;
+  Timer? _frameTimer;
 
   // ──────────────────────────────────────────
   // 앱 상태 & 애니메이션
   // ──────────────────────────────────────────
   AppState _appState = AppState.idle;
-  int _currentFrame = 0;          // 현재 스프라이트 프레임
-  ui.Image? _spriteImage;         // 일하는 스프라이트
-  ui.Image? _firedImage;          // 해고 스프라이트
-  ui.Image? _idleImage;           // 대기 스프라이트
-  ui.Image? _successImage;        // 성공 스프라이트
+  int _currentFrame = 0;
+  ui.Image? _spriteImage;
+  ui.Image? _firedImage;
+  ui.Image? _idleImage;
+  ui.Image? _successImage;
 
   String _statusMessage = "🐾 함께 일할 준비 중...";
-  int _attendanceDays = 0;        // 출석 일수
+  int _attendanceDays = 0;
 
   // ──────────────────────────────────────────
   // 색상 팔레트
   // ──────────────────────────────────────────
-  static const Color _bgIdle    = Color(0xFFD6C9A0); // 대기 배경 (모래빛)
-  static const Color _bgRunning = Color(0xFFA8C87A); // 실행 배경 (풀색)
-  static const Color _bgBottom  = Color(0xFFF5E6C8); // 하단 배경 (양피지)
-  static const Color _darkGreen = Color(0xFF3D5C28); // 진한 초록
-  static const Color _btnBlue   = Color(0xFF4A7FBD); // 버튼 파랑
-  static const Color _btnOrange = Color(0xFFD4782A); // 버튼 주황
-  static const Color _btnRed    = Color(0xFFBD3A3A); // 버튼 빨강
-  static const Color _btnGreen  = Color(0xFF4A9E4A); // 버튼 초록
+  static const Color _bgIdle    = Color(0xFFD6C9A0);
+  static const Color _bgRunning = Color(0xFFA8C87A);
+  static const Color _bgBottom  = Color(0xFFF5E6C8);
+  static const Color _darkGreen = Color(0xFF3D5C28);
+  static const Color _btnBlue   = Color(0xFF4A7FBD);
+  static const Color _btnOrange = Color(0xFFD4782A);
+  static const Color _btnRed    = Color(0xFFBD3A3A);
+  static const Color _btnGreen  = Color(0xFF4A9E4A);
 
   // ──────────────────────────────────────────
   // 크기 상수
   // ──────────────────────────────────────────
-  static const double _circleSize    = 200; // 원형 진행바 지름
-  static const double _characterSize = 110; // 캐릭터 크기
-  static const double _coinBadgeW    = 100; // 코인 뱃지 너비
-  static const double _coinBadgeH    = 48;  // 코인 뱃지 높이
-  static const double _coinIconSize  = 48;  // 코인 아이콘 크기
-  static const double _topOffset     = 60;  // 상단 여백 (출석/코인 버튼과 겹침 방지)
+  static const double _circleSize    = 200;
+  static const double _characterSize = 110;
+  static const double _coinBadgeW    = 100;
+  static const double _coinBadgeH    = 48;
+  static const double _coinIconSize  = 48;
+  static const double _topOffset     = 60;
 
-  // 진행도 계산 (0.0 ~ 1.0)
   double get _progress =>
       _appState == AppState.running || _appState == AppState.paused
           ? (_totalSeconds - _secondsRemaining) / _totalSeconds
           : 0.0;
 
-  // 캐릭터에 맞는 코인 이미지
   String get _coinAsset =>
       widget.character == 'cat' ? 'assets/catcoin.png' : 'assets/dogcoin.png';
 
@@ -367,6 +365,20 @@ class _MainScreenState extends State<MainScreen> {
     return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
+  // ──────────────────────────────────────────
+  // 돈 표시 포맷 (1000 이상이면 k 단위)
+  // ──────────────────────────────────────────
+  String _formatMoney(double money) {
+    final m = money.toInt();
+    if (m >= 1000) {
+      final k = m / 1000;
+      return k == k.truncateToDouble()
+          ? "${k.toInt()}k"
+          : "${k.toStringAsFixed(1)}k";
+    }
+    return "$m";
+  }
+
   ui.Image? get _currentImage {
     switch (_appState) {
       case AppState.fired:
@@ -495,7 +507,7 @@ class _MainScreenState extends State<MainScreen> {
 
     return Scaffold(
       drawer: Drawer(
-        width: MediaQuery.of(context).size.width * 0.4,
+        width: MediaQuery.of(context).size.width * 0.45,
         child: Container(
           color: const Color(0xFFF5E6C8),
           child: SafeArea(
@@ -541,7 +553,7 @@ class _MainScreenState extends State<MainScreen> {
           ),
         ),
       ),
-      body: SafeArea( // ← 상태바 침범 방지
+      body: SafeArea(
         child: Column(
           children: [
             // ──────────────────────────────────────────
@@ -557,8 +569,7 @@ class _MainScreenState extends State<MainScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        SizedBox(height: _topOffset), // 상단 버튼과 겹침 방지 여백
-                        // 원형 진행바 + 캐릭터
+                        SizedBox(height: _topOffset),
                         SizedBox(
                           width: _circleSize,
                           height: _circleSize,
@@ -656,7 +667,7 @@ class _MainScreenState extends State<MainScreen> {
                               ),
                               Expanded(
                                 child: Text(
-                                  "${money.toInt()}원",
+                                  _formatMoney(money), // ← 변경
                                   textAlign: TextAlign.right,
                                   style: const TextStyle(
                                     color: Colors.white,
@@ -686,7 +697,6 @@ class _MainScreenState extends State<MainScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // 타이머 표시 (idle 상태에서 탭하면 설정)
                     GestureDetector(
                       onTap: _appState == AppState.idle ? _showTimerPicker : null,
                       child: Container(
@@ -709,14 +719,12 @@ class _MainScreenState extends State<MainScreen> {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    // 현재 상태 텍스트
                     Text(
                       _bottomText,
                       style: const TextStyle(
                           fontSize: 14, color: Color(0xFF6B4F1A)),
                     ),
                     const SizedBox(height: 60),
-                    // 시작/정지/재개 버튼
                     _buildButtons(),
                   ],
                 ),
@@ -733,7 +741,7 @@ class _MainScreenState extends State<MainScreen> {
 // 원형 진행바 페인터
 // ──────────────────────────────────────────
 class _CircleProgressPainter extends CustomPainter {
-  final double progress; // 0.0 ~ 1.0
+  final double progress;
 
   _CircleProgressPainter({required this.progress});
 
@@ -743,7 +751,6 @@ class _CircleProgressPainter extends CustomPainter {
     final radius = size.width / 2 - 8;
     const strokeWidth = 10.0;
 
-    // 배경 원 (빈 부분)
     canvas.drawCircle(
       center,
       radius,
@@ -754,11 +761,10 @@ class _CircleProgressPainter extends CustomPainter {
     );
 
     if (progress > 0) {
-      // 진행 원 (초록색, 시계방향)
       canvas.drawArc(
         Rect.fromCircle(center: center, radius: radius),
-        -pi / 2,           // 12시 방향 시작
-        2 * pi * progress, // 시계방향으로 채움
+        -pi / 2,
+        2 * pi * progress,
         false,
         Paint()
           ..color = const Color(0xFF4A9E4A)
@@ -767,7 +773,6 @@ class _CircleProgressPainter extends CustomPainter {
           ..strokeCap = StrokeCap.butt,
       );
 
-      // 진행 끝부분 동그란 점
       final angle = -pi / 2 + 2 * pi * progress;
       final dotX = center.dx + radius * cos(angle);
       final dotY = center.dy + radius * sin(angle);

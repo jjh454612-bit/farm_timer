@@ -18,6 +18,7 @@ class FarmTimerApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         title: '공부 농장',
         theme: ThemeData(
+          fontFamily : 'NeoDunggeunmo',
           colorScheme: ColorScheme.fromSeed(
             seedColor: const Color(0xFF5B8A3C),
             primary: const Color(0xFF5B8A3C),

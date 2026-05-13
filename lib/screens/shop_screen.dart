@@ -7,7 +7,7 @@ class ShopItem {
   final String imagePath;
   final String name;
   final String description;
-  final double price;
+  final double price; // 땅 확장권은 동적 가격이라 여기선 무시
 
   const ShopItem({
     required this.id,
@@ -19,10 +19,12 @@ class ShopItem {
 }
 
 const List<ShopItem> _shopItems = [
-  ShopItem(id: 'house',    imagePath: 'assets/house1.png',   name: '집',    description: '주민들이 살 수 있는 집',    price: 500),
-  ShopItem(id: 'park',     imagePath: 'assets/park.png',     name: '공원',  description: '휴식을 위한 공원',          price: 300),
-  ShopItem(id: 'police',   imagePath: 'assets/police.png',   name: '경찰서', description: '마을을 지키는 경찰서',      price: 800),
-  ShopItem(id: 'hospital', imagePath: 'assets/hospital.png', name: '병원',  description: '아픈 주민을 치료하는 병원', price: 1000),
+  ShopItem(id: 'house',     imagePath: 'assets/house1.png',    name: '집',       description: '주민들이 살 수 있는 집',      price: 500),
+  ShopItem(id: 'park',      imagePath: 'assets/park.png',      name: '공원',     description: '휴식을 위한 공원',            price: 300),
+  ShopItem(id: 'police',    imagePath: 'assets/police.png',    name: '경찰서',   description: '마을을 지키는 경찰서',        price: 800),
+  ShopItem(id: 'hospital',  imagePath: 'assets/hospital.png',  name: '병원',     description: '아픈 주민을 치료하는 병원',   price: 1000),
+  ShopItem(id: 'towerpark', imagePath: 'assets/towerpark.png', name: '탑 공원',  description: '높은 탑이 있는 공원',         price: 1200),
+  ShopItem(id: 'land',      imagePath: '',                     name: '땅 확장권', description: '마을을 한 칸 더 넓혀요. 살수록 가격이 올라요!', price: 0),
 ];
 
 const Color _darkGreen = Color(0xFF3D5C28);
@@ -31,19 +33,26 @@ const Color _btnBlue   = Color(0xFF4A7FBD);
 const Color _btnGreen  = Color(0xFF4A9E4A);
 const Color _gold      = Color(0xFF8B6914);
 
-// 크기 상수 따로 관리
-const double _coinBadgeW     = 100; // 앱바 코인 뱃지 너비
-const double _coinBadgeH     = 48;  // 앱바 코인 뱃지 높이
-const double _coinBadgeIcon  = 48;  // 앱바 코인 아이콘 크기
-const double _itemImageSize  = 64;  // 아이템 건물 이미지 크기
-const double _priceIconSize  = 16;  // 가격 앞 코인 아이콘 크기
+const double _coinBadgeW    = 100;
+const double _coinBadgeH    = 48;
+const double _coinBadgeIcon = 48;
+const double _itemImageSize = 64;
+const double _priceIconSize = 16;
 
 class ShopScreen extends StatelessWidget {
   const ShopScreen({super.key});
 
+  String _formatMoney(double amount) {
+    if (amount >= 1000) {
+      final k = amount / 1000;
+      return k == k.toInt() ? "${k.toInt()}k" : "${k.toStringAsFixed(1)}k";
+    }
+    return amount.toInt().toString();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<GameProvider>();
+    final provider  = context.watch<GameProvider>();
     final coinAsset = provider.character == 'cat'
         ? 'assets/catcoin.png'
         : 'assets/dogcoin.png';
@@ -63,21 +72,18 @@ class ShopScreen extends StatelessWidget {
             ),
             child: Row(
               children: [
-                Image.asset(
-                  coinAsset,
-                  width: _coinBadgeIcon,
-                  height: _coinBadgeIcon,
-                  filterQuality: FilterQuality.none,
-                ),
+                Image.asset(coinAsset,
+                    width: _coinBadgeIcon,
+                    height: _coinBadgeIcon,
+                    filterQuality: FilterQuality.none),
                 Expanded(
                   child: Text(
-                    "${provider.money.toInt()}원",
+                    _formatMoney(provider.money),
                     textAlign: TextAlign.right,
                     style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white),
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -89,11 +95,13 @@ class ShopScreen extends StatelessWidget {
       body: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _shopItems.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        separatorBuilder: (_, _) => const SizedBox(height: 12),
         itemBuilder: (context, index) {
-          final item = _shopItems[index];
-          final owned = provider.owns(item.id);
-          final canAfford = provider.canAfford(item.price);
+          final item      = _shopItems[index];
+          final isLand    = item.id == 'land';
+          final itemPrice = isLand ? provider.nextLandPrice.toDouble() : item.price;
+          final owned     = !isLand && provider.owns(item.id);
+          final canAfford = provider.canAfford(itemPrice);
 
           return Container(
             decoration: BoxDecoration(
@@ -107,35 +115,56 @@ class ShopScreen extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
+                  // 이미지
                   SizedBox(
                     width: _itemImageSize,
                     height: _itemImageSize,
-                    child: Image.asset(
-                      item.imagePath,
-                      fit: BoxFit.contain,
-                      filterQuality: FilterQuality.none,
-                    ),
+                    child: isLand
+                        ? const Center(child: Text("🏞", style: TextStyle(fontSize: 36)))
+                        : Image.asset(item.imagePath,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.none),
                   ),
                   const SizedBox(width: 16),
+                  // 이름 / 설명 / 가격
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          item.name,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: _darkGreen,
-                          ),
+                        Row(
+                          children: [
+                            Text(
+                              item.name,
+                              style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: _darkGreen),
+                            ),
+                            if (isLand && provider.landVouchers > 0) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: _btnGreen,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  "보유 ${provider.landVouchers}장",
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Text(
                           item.description,
                           style: const TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF6B4F1A),
-                          ),
+                              fontSize: 13, color: Color(0xFF6B4F1A)),
                         ),
                         const SizedBox(height: 6),
                         Row(
@@ -143,20 +172,17 @@ class ShopScreen extends StatelessWidget {
                             SizedBox(
                               width: _priceIconSize,
                               height: _priceIconSize,
-                              child: Image.asset(
-                                coinAsset,
-                                fit: BoxFit.contain,
-                                filterQuality: FilterQuality.none,
-                              ),
+                              child: Image.asset(coinAsset,
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.none),
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              "${item.price.toInt()}원",
+                              "${_formatMoney(itemPrice)}원",
                               style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                color: _darkGreen,
-                              ),
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: _darkGreen),
                             ),
                           ],
                         ),
@@ -164,6 +190,7 @@ class ShopScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
+                  // 구매 버튼
                   owned
                       ? Container(
                           padding: const EdgeInsets.symmetric(
@@ -173,18 +200,19 @@ class ShopScreen extends StatelessWidget {
                             border: Border.all(
                                 color: const Color(0xFF2A3D1A), width: 2),
                           ),
-                          child: const Text(
-                            "보유중",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          child: const Text("보유중",
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold)),
                         )
                       : ElevatedButton(
                           onPressed: canAfford
                               ? () {
-                                  provider.buyBuilding(item.id, item.price);
+                                  if (isLand) {
+                                    provider.buyLandVoucher();
+                                  } else {
+                                    provider.buyBuilding(item.id, item.price);
+                                  }
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Text("${item.name} 구매 완료!"),
