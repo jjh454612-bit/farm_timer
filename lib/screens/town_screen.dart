@@ -17,26 +17,21 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
   ui.Image? _carFlipImage;
   final Map<String, ui.Image?> _buildingImages = {};
 
-  String? _selectedBuilding; // 'land' = 땅 확장권 모드
+  String? _selectedBuilding;
   int? _previewTile;
   bool _previewRotated = false;
-
-  final ScrollController _scrollController = ScrollController();
 
   static const double _groundScale   = 2.0;
   static const double _buildingScale = 3.0;
   static const double _tileScale     = 3.0;
   static const double _carScale      = 1.0;
 
-  static const double _groundW = 256 * _groundScale; // 512
-  static const double _groundH = 148 * _groundScale; // 296
+  static const double _groundW = 256 * _groundScale;
+  static const double _groundH = 148 * _groundScale;
   static const double _extraH  = 500;
 
-  // 캔버스 고정 크기 — InteractiveViewer로 자유롭게 이동/확대 가능
   static const double _canvasSize = 5000;
-
-  // 메인 ground(0,0)의 캔버스 내 기준점 (x: 중앙, y: extraH)
-  static const double _originX = _canvasSize / 2 - _groundW / 2; // 2244
+  static const double _originX = _canvasSize / 2 - _groundW / 2;
   static const double _originY = _extraH;
 
   double get _bw => 64 * _buildingScale;
@@ -44,19 +39,23 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
   double get _th => 32 * _tileScale;
   double get _carSize => 32 * _carScale;
 
+  static const Set<String> _noRotation = {'towerpark'};
+
   static const Map<String, Map<String, String>> _buildingInfo = {
     'house':     {'asset': 'assets/house1.png',    'label': '집'},
     'park':      {'asset': 'assets/park.png',      'label': '공원'},
     'police':    {'asset': 'assets/police.png',    'label': '경찰서'},
     'hospital':  {'asset': 'assets/hospital.png',  'label': '병원'},
     'towerpark': {'asset': 'assets/towerpark.png', 'label': '탑 공원'},
+    'fire':      {'asset': 'assets/fire.png',      'label': '소방서'},
+    'landmark':  {'asset': 'assets/landmark.png',  'label': '랜드마크'},
+    'pondpark':  {'asset': 'assets/pondpark.png',  'label': '연못공원'},
+    'oldapt':    {'asset': 'assets/oldapt.png',    'label': '구형아파트'},
+    'apt':       {'asset': 'assets/apt.png',       'label': '아파트'},
   };
 
-  // 타일 인덱스: tileBase(gx, gy) = (gx+50)*1000 + gy*4
-  // local 0=top, 1=left, 2=right, 3=bottom
   static int _tileBase(int gx, int gy) => (gx + 50) * 1000 + gy * 4;
 
-  // ground (gx,gy)의 캔버스 내 top-left 좌표
   double _groundLeft(int gx) => _originX + gx * _groundW / 2;
   double _groundTop(int gy)  => _originY + gy * _groundH / 2;
 
@@ -68,6 +67,13 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
     map[base + 1] = Offset(110 + gl, 128 + gt);
     map[base + 2] = Offset(400 + gl, 128 + gt);
     map[base + 3] = Offset(256 + gl, 199 + gt);
+  }
+
+  // ── 행복도 이모지/색상 ──
+  String _happinessEmoji(int h) {
+    if (h < 30) return "😢";
+    if (h < 70) return "😐";
+    return "😊";
   }
 
   late AnimationController _carController;
@@ -86,7 +92,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(seconds: 16),
     )..repeat();
-    // 차 경로는 메인 ground(0,0) 기준, 렌더 시 _originX 더함
     _carAnim = Tween<Offset>(
       begin: const Offset(400, 180 + _extraH),
       end: const Offset(130, 50 + _extraH),
@@ -117,7 +122,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       ),
     ]).animate(CurvedAnimation(parent: _carFlipController, curve: Curves.linear));
 
-    // 초기 뷰: 메인 ground가 화면 중앙에 오도록 이동
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final size = MediaQuery.of(context).size;
       _transformController.value = Matrix4.translationValues(
@@ -130,7 +134,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _scrollController.dispose();
     _carController.dispose();
     _carFlipController.dispose();
     _transformController.dispose();
@@ -145,9 +148,9 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
 
   Future<void> _loadImages() async {
     try {
-      _groundImage              = await _loadImg('assets/ground.png');
-      _carImage                 = await _loadImg('assets/car.png');
-      _carFlipImage             = await _loadImg('assets/car1-1.png');
+      _groundImage  = await _loadImg('assets/ground.png');
+      _carImage     = await _loadImg('assets/car.png');
+      _carFlipImage = await _loadImg('assets/car1-1.png');
       _buildingImages['house']      = await _loadImg('assets/house1.png');
       _buildingImages['house-1']    = await _loadImg('assets/house1-1.png');
       _buildingImages['park']       = await _loadImg('assets/park.png');
@@ -157,6 +160,16 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       _buildingImages['hospital']   = await _loadImg('assets/hospital.png');
       _buildingImages['hospital-1'] = await _loadImg('assets/hospital1-1.png');
       _buildingImages['towerpark']  = await _loadImg('assets/towerpark.png');
+      _buildingImages['fire']       = await _loadImg('assets/fire.png');
+      _buildingImages['fire-1']     = await _loadImg('assets/fire1-1.png');
+      _buildingImages['landmark']   = await _loadImg('assets/landmark.png');
+      _buildingImages['landmark-1'] = await _loadImg('assets/landmark1-1.png');
+      _buildingImages['pondpark']   = await _loadImg('assets/pondpark.png');
+      _buildingImages['pondpark-1'] = await _loadImg('assets/pondpark1-1.png');
+      _buildingImages['oldapt']     = await _loadImg('assets/oldapt.png');
+      _buildingImages['oldapt-1']   = await _loadImg('assets/oldapt1-1.png');
+      _buildingImages['apt']        = await _loadImg('assets/apt.png');
+      _buildingImages['apt-1']      = await _loadImg('assets/apt1-1.png');
       setState(() {});
     } catch (e) {
       debugPrint("❌ 로드 실패: $e");
@@ -165,7 +178,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
 
   String _getBuildingKey(GameProvider provider, int idx) {
     final type = provider.placedBuildings[idx]!;
-    if (type == 'towerpark') return type;
+    if (_noRotation.contains(type)) return type;
     return provider.rotatedTiles.contains(idx) ? '$type-1' : type;
   }
 
@@ -238,8 +251,9 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
     final placedBuildings = provider.placedBuildings;
     final landVouchers    = provider.landVouchers;
     final hasItems        = ownedBuildings.isNotEmpty || landVouchers > 0;
+    final population      = provider.population;
+    final happiness       = provider.happiness;
 
-    // ── 타일 앵커 맵 (모든 설치된 ground) ──
     final Map<int, Offset> tileAnchors = {};
     for (final pos in groundGrid) {
       final parts = pos.split(',');
@@ -248,14 +262,12 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       _addGroundAnchors(tileAnchors, gx, gy);
     }
 
-    // ── 확장 가능한 슬롯 (기존 땅의 빈 이웃 위치) ──
     final Set<(int, int)> expansionSlots = {};
     if (_isLandMode) {
       for (final pos in groundGrid) {
         final parts = pos.split(',');
         final gx = int.parse(parts[0]);
         final gy = int.parse(parts[1]);
-        // 각 ground에서 하-좌, 하-우 방향 탐색
         for (final d in [(-1, 1), (1, 1)]) {
           final nx = gx + d.$1;
           final ny = gy + d.$2;
@@ -279,19 +291,22 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       ),
       body: Column(
         children: [
+
           // ── 마을 뷰 ──
           Expanded(
             flex: 6,
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0xFF87CEEB), Color(0xFFB8E4F9), Color(0xFF8BC34A)],
-                  stops: [0.0, 0.6, 1.0],
-                ),
-              ),
-              child: _groundImage == null
+            child: Stack(
+              children: [
+                Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Color(0xFF87CEEB), Color(0xFFB8E4F9), Color(0xFF8BC34A)],
+                      stops: [0.0, 0.6, 1.0],
+                    ),
+                  ),
+                  child: _groundImage == null
                   ? const Center(child: CircularProgressIndicator())
                   : InteractiveViewer(
                       transformationController: _transformController,
@@ -305,7 +320,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            // ── Ground PNG들 ──
                             for (final pos in groundGrid) ...[
                               () {
                                 final parts = pos.split(',');
@@ -321,14 +335,11 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                                 );
                               }(),
                             ],
-
-                            // ── 건물 + 차 + 확장 하이라이트 (painter algorithm) ──
                             AnimatedBuilder(
                               animation: Listenable.merge([_carAnim, _carFlipAnim]),
                               builder: (context, _) {
                                 final rawCar     = _carAnim.value;
                                 final rawCarFlip = _carFlipAnim.value;
-                                // 차 위치: 메인 ground 기준 + _originX
                                 final carPos     = Offset(rawCar.dx + _originX,     rawCar.dy);
                                 final carFlipPos = Offset(rawCarFlip.dx + _originX, rawCarFlip.dy);
 
@@ -342,7 +353,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                                 bool carDrawn = false, carFlipDrawn = false;
                                 final widgets = <Widget>[];
 
-                                // ── 땅 확장 슬롯 하이라이트 (맨 먼저 그려서 건물 아래에 위치) ──
                                 for (final slot in expansionSlots) {
                                   final nx = slot.$1;
                                   final ny = slot.$2;
@@ -375,7 +385,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                                     }
                                   }
 
-                                  // 타일 하이라이트 (건물 배치 모드)
                                   if (!_isLandMode && _selectedBuilding != null && _previewTile != idx) {
                                     widgets.add(Positioned(
                                       left: anchor.dx - _bw / 2,
@@ -391,7 +400,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                                     ));
                                   }
 
-                                  // 배치된 건물
                                   if (_previewTile != idx &&
                                       placedBuildings.containsKey(idx) &&
                                       _buildingImages[_getBuildingKey(provider, idx)] != null) {
@@ -407,12 +415,11 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                                     ));
                                   }
 
-                                  // 프리뷰 건물
                                   if (!_isLandMode &&
                                       _previewTile == idx &&
                                       _selectedBuilding != null &&
                                       _buildingImages[_getPreviewKey()] != null) {
-                                    final pk = _getPreviewKey();
+                                    final pk  = _getPreviewKey();
                                     final pbh = _getBuildingH(pk);
                                     widgets.add(Positioned(
                                       left: anchor.dx - _bw / 2,
@@ -435,7 +442,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                                   widgets.add(_buildCar(carFlipPos, _carFlipImage!));
                                 }
 
-                                // 배치 확인/회전/취소 버튼
                                 if (!_isLandMode && _previewTile != null &&
                                     tileAnchors.containsKey(_previewTile!)) {
                                   final pa = tileAnchors[_previewTile!]!;
@@ -461,85 +467,112 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                         ),
                       ),
                     ),
+                ),
+                // ── 인구/행복도 캡슐 (오른쪽 상단) ──
+                Positioned(
+                  top: 12, right: 12,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      _statCapsule(
+                        "👥 $population명",
+                        const Color(0xFF4A7FBD),
+                      ),
+                      const SizedBox(height: 6),
+                      _statCapsule(
+                        "${_happinessEmoji(happiness)} $happiness%",
+                        happiness < 30
+                            ? Colors.red[400]!
+                            : happiness < 70
+                                ? Colors.grey[600]!
+                                : const Color(0xFF4A9E4A),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
 
-          // ── 하단 패널 (overflow 방지: SingleChildScrollView) ──
-          Expanded(
-            flex: 4,
+          // ── 하단 패널 ──
+          SafeArea(
+            top: false,
             child: Container(
               width: double.infinity,
               color: Colors.brown[100],
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.only(top: 16),
-                child: Column(
-                  children: [
-                    const Text(
-                      "아이템 선택",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                    if (_selectedBuilding != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          _isLandMode ? "확장할 땅을 탭하세요!" : "타일을 탭해서 배치하세요!",
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: _isLandMode ? Colors.orange[700] : Colors.blue[600],
-                          ),
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    "아이템 선택",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  if (_selectedBuilding != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        _isLandMode ? "확장할 땅을 탭하세요!" : "타일을 탭해서 배치하세요!",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _isLandMode ? Colors.orange[700] : Colors.blue[600],
                         ),
                       ),
-                    const SizedBox(height: 8),
-                    // 아이템 목록
-                    SizedBox(
-                      height: 90,
-                      child: !hasItems
-                          ? Center(
-                              child: Text(
-                                "상점에서 아이템을 구매하세요!",
-                                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-                              ),
-                            )
-                          : Scrollbar(
-                              controller: _scrollController,
-                              thumbVisibility: true,
-                              scrollbarOrientation: ScrollbarOrientation.bottom,
-                              child: SingleChildScrollView(
-                                controller: _scrollController,
-                                scrollDirection: Axis.horizontal,
-                                padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (landVouchers > 0)
-                                      Padding(
-                                        padding: const EdgeInsets.only(right: 12),
-                                        child: _buildLandVoucherBtn(landVouchers),
-                                      ),
-                                    ...ownedBuildings.map((id) {
-                                      final info = _buildingInfo[id];
-                                      if (info == null) return const SizedBox();
-                                      return Padding(
-                                        padding: const EdgeInsets.only(right: 12),
-                                        child: _buildItemBtn(id, info['asset']!, info['label']!),
-                                      );
-                                    }),
-                                  ],
-                                ),
-                              ),
-                            ),
                     ),
-                    if (_selectedBuilding != null)
-                      TextButton(
-                        onPressed: _resetSelection,
-                        child: const Text("선택 취소"),
-                      ),
-                  ],
-                ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 168,
+                    child: !hasItems
+                        ? Center(
+                            child: Text(
+                              "상점에서 아이템을 구매하세요!",
+                              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                            ),
+                          )
+                        : GridView.count(
+                            crossAxisCount: 2,
+                            scrollDirection: Axis.horizontal,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            children: [
+                              if (landVouchers > 0) _buildLandVoucherBtn(landVouchers),
+                              ...ownedBuildings.map((id) {
+                                final info = _buildingInfo[id];
+                                if (info == null) return const SizedBox();
+                                final qty = provider.quantity(id);
+                                return _buildItemBtn(id, info['asset']!, info['label']!, qty: qty);
+                              }),
+                            ],
+                          ),
+                  ),
+                  if (_selectedBuilding != null)
+                    TextButton(
+                      onPressed: _resetSelection,
+                      child: const Text("선택 취소"),
+                    ),
+                ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _statCapsule(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -553,8 +586,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
         _previewRotated = false;
       }),
       child: Container(
-        width: 70,
-        height: 70,
         decoration: BoxDecoration(
           color: isSelected ? Colors.orange[100] : Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -615,7 +646,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildItemBtn(String id, String assetPath, String label) {
+  Widget _buildItemBtn(String id, String assetPath, String label, {int qty = 0}) {
     final isSelected = _selectedBuilding == id;
     return GestureDetector(
       onTap: () => setState(() {
@@ -624,7 +655,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
         _previewRotated = false;
       }),
       child: Container(
-        width: 70, height: 70,
         decoration: BoxDecoration(
           color: isSelected ? Colors.blue[100] : Colors.white,
           borderRadius: BorderRadius.circular(12),
@@ -638,15 +668,18 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
           children: [
             Image.asset(assetPath, width: 32, height: 32, filterQuality: FilterQuality.none),
             const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 11)),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 10),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1,
+            ),
           ],
         ),
       ),
     );
   }
 }
-
-// ── Painters ──
 
 class _TilePainter extends CustomPainter {
   final ui.Image image;

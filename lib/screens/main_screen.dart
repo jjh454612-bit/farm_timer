@@ -10,6 +10,9 @@ import '../widgets/attendance_popup.dart';
 import '../providers/game_provider.dart';
 import 'shop_screen.dart';
 import 'town_screen.dart';
+import 'mission_popup.dart';
+import 'stats_screen.dart';
+import 'settings_screen.dart';
 
 enum AppState { idle, running, paused, fired, firedAnimating, success, successAnimating }
 
@@ -22,18 +25,14 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  // ──────────────────────────────────────────
-  // 타이머 관련
-  // ──────────────────────────────────────────
   int _totalSeconds = 1500;
   int _secondsRemaining = 1500;
   double _currentEarning = 0;
+  int _elapsedStudySeconds = 0;
+  DateTime? _sessionStartTime;
   Timer? _timer;
   Timer? _frameTimer;
 
-  // ──────────────────────────────────────────
-  // 앱 상태 & 애니메이션
-  // ──────────────────────────────────────────
   AppState _appState = AppState.idle;
   int _currentFrame = 0;
   ui.Image? _spriteImage;
@@ -43,22 +42,14 @@ class _MainScreenState extends State<MainScreen> {
 
   String _statusMessage = "🐾 함께 일할 준비 중...";
   int _attendanceDays = 0;
+  bool _hasClaimedToday = false;
 
-  // ──────────────────────────────────────────
-  // 색상 팔레트
-  // ──────────────────────────────────────────
-  static const Color _bgIdle    = Color(0xFFD6C9A0);
-  static const Color _bgRunning = Color(0xFFA8C87A);
-  static const Color _bgBottom  = Color(0xFFF5E6C8);
   static const Color _darkGreen = Color(0xFF3D5C28);
   static const Color _btnBlue   = Color(0xFF4A7FBD);
   static const Color _btnOrange = Color(0xFFD4782A);
   static const Color _btnRed    = Color(0xFFBD3A3A);
   static const Color _btnGreen  = Color(0xFF4A9E4A);
 
-  // ──────────────────────────────────────────
-  // 크기 상수
-  // ──────────────────────────────────────────
   static const double _circleSize    = 200;
   static const double _characterSize = 110;
   static const double _coinBadgeW    = 100;
@@ -92,25 +83,36 @@ class _MainScreenState extends State<MainScreen> {
           .subtract(const Duration(days: 1))
           .toIso8601String()
           .substring(0, 10);
-
       if (lastDate == yesterday) {
         days = days + 1;
         if (days > 7) days = 1;
       } else {
         days = 1;
       }
-
       await prefs.setString('lastAttendanceDate', today);
       await prefs.setInt('attendanceDays', days);
     }
 
-    setState(() => _attendanceDays = days);
+    final lastClaimDate = prefs.getString('lastClaimDate') ?? '';
+    setState(() {
+      _attendanceDays  = days;
+      _hasClaimedToday = lastClaimDate == today;
+    });
+  }
+
+  Future<void> _claimReward(int reward) async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = DateTime.now().toIso8601String().substring(0, 10);
+    await prefs.setString('lastClaimDate', today);
+    if (mounted) {
+      context.read<GameProvider>().addMoney(reward.toDouble());
+      setState(() => _hasClaimedToday = true);
+    }
   }
 
   Future<void> _loadSprites() async {
     try {
       final isCat = widget.character == 'cat';
-
       final data1 = await rootBundle.load(isCat ? 'assets/workcat.png' : 'assets/workdog.png');
       final codec1 = await ui.instantiateImageCodec(data1.buffer.asUint8List());
       final f1 = await codec1.getNextFrame();
@@ -128,12 +130,11 @@ class _MainScreenState extends State<MainScreen> {
       final f4 = await codec4.getNextFrame();
 
       setState(() {
-        _spriteImage = f1.image;
-        _firedImage = f2.image;
-        _idleImage = f3.image;
+        _spriteImage  = f1.image;
+        _firedImage   = f2.image;
+        _idleImage    = f3.image;
         _successImage = f4.image;
       });
-
       _startIdleAnimation();
     } catch (e) {
       debugPrint("❌ 로드 실패: $e");
@@ -159,7 +160,8 @@ class _MainScreenState extends State<MainScreen> {
     _frameTimer?.cancel();
     _currentFrame = 0;
     _frameTimer = Timer.periodic(const Duration(milliseconds: 400), (_) {
-      setState(() => _currentFrame = (_currentFrame + 1) % (widget.character == 'cat' ? 4 : 7));
+      setState(() => _currentFrame =
+          (_currentFrame + 1) % (widget.character == 'cat' ? 4 : 7));
     });
   }
 
@@ -194,22 +196,28 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  void _start() {
-    setState(() {
-      _appState = AppState.running;
-      _currentEarning = 0;
-      _secondsRemaining = _totalSeconds;
-      _statusMessage = "🐾 열심히 일하는 중!";
-    });
-    _startWorkAnimation();
+  void _runTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       setState(() {
         if (_secondsRemaining > 0) {
           _secondsRemaining--;
           _currentEarning = (_totalSeconds - _secondsRemaining) * 100 / 600;
+          _elapsedStudySeconds++;
+          if (_elapsedStudySeconds % 60 == 0) {
+            context.read<GameProvider>().addStudyMinutes(1);
+          }
         } else {
+          final remainingSecs = _elapsedStudySeconds % 60;
+          if (remainingSecs > 0) {
+            context.read<GameProvider>().addStudyMinutes(1);
+          }
+          if (_sessionStartTime != null) {
+            context.read<GameProvider>().addSession(_totalSeconds, _sessionStartTime!);
+            _sessionStartTime = null;
+          }
           context.read<GameProvider>().addMoney(_currentEarning);
           _currentEarning = 0;
+          _elapsedStudySeconds = 0;
           _timer?.cancel();
           _secondsRemaining = _totalSeconds;
           _statusMessage = "💰 알바 성공! 월급을 가져왔어요!";
@@ -220,7 +228,38 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  void _start() {
+    setState(() {
+      _appState = AppState.running;
+      _currentEarning = 0;
+      _elapsedStudySeconds = 0;
+      _sessionStartTime = DateTime.now();
+      _secondsRemaining = _totalSeconds;
+      _statusMessage = "🐾 열심히 일하는 중!";
+    });
+    _startWorkAnimation();
+    _runTimer();
+  }
+
   void _pause() {
+    final success = context.read<GameProvider>().usePause();
+    if (!success) {
+      // 횟수 초과 알림
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text("⏸ 일시정지 횟수 초과"),
+          content: const Text("오늘 일시정지 횟수를 모두 사용했어요!\n내일 다시 5번 충전됩니다."),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("확인"),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     _timer?.cancel();
     setState(() {
       _appState = AppState.paused;
@@ -235,28 +274,18 @@ class _MainScreenState extends State<MainScreen> {
       _statusMessage = "🐾 열심히 일하는 중!";
     });
     _startWorkAnimation();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() {
-        if (_secondsRemaining > 0) {
-          _secondsRemaining--;
-          _currentEarning = (_totalSeconds - _secondsRemaining) * 100 / 600;
-        } else {
-          context.read<GameProvider>().addMoney(_currentEarning);
-          _currentEarning = 0;
-          _timer?.cancel();
-          _secondsRemaining = _totalSeconds;
-          _statusMessage = "💰 알바 성공! 월급을 가져왔어요!";
-          _startSuccessAnimation();
-          _appState = AppState.successAnimating;
-        }
-      });
-    });
+    _runTimer();
   }
 
   void _stop() {
     _timer?.cancel();
+    if (_sessionStartTime != null) {
+      context.read<GameProvider>().addSession(_elapsedStudySeconds, _sessionStartTime!);
+      _sessionStartTime = null;
+    }
     setState(() {
       _currentEarning = 0;
+      _elapsedStudySeconds = 0;
       _secondsRemaining = _totalSeconds;
       _statusMessage = "😿 한눈팔아서 실직했어요...";
       _appState = AppState.firedAnimating;
@@ -278,7 +307,19 @@ class _MainScreenState extends State<MainScreen> {
     showDialog(
       context: context,
       barrierDismissible: true,
-      builder: (context) => AttendancePopup(attendanceDays: _attendanceDays),
+      builder: (_) => AttendancePopup(
+        attendanceDays: _attendanceDays,
+        hasClaimedToday: _hasClaimedToday,
+        onClaim: _claimReward,
+      ),
+    );
+  }
+
+  void _showMissionPopup() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => const MissionPopup(),
     );
   }
 
@@ -307,7 +348,8 @@ class _MainScreenState extends State<MainScreen> {
                       initialItem: (tempMinutes ~/ 5) - 1,
                     ),
                     onSelectedItemChanged: (index) {
-                      setDialogState(() => tempMinutes = index == 0 ? 1 : index * 5);
+                      setDialogState(
+                          () => tempMinutes = index == 0 ? 1 : index * 5);
                     },
                     childDelegate: ListWheelChildBuilderDelegate(
                       childCount: 25,
@@ -331,10 +373,8 @@ class _MainScreenState extends State<MainScreen> {
                     ),
                   ),
                 ),
-                const Text(
-                  "분",
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                ),
+                const Text("분",
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               ],
             ),
           ),
@@ -365,9 +405,6 @@ class _MainScreenState extends State<MainScreen> {
     return "${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}";
   }
 
-  // ──────────────────────────────────────────
-  // 돈 표시 포맷 (1000 이상이면 k 단위)
-  // ──────────────────────────────────────────
   String _formatMoney(double money) {
     final m = money.toInt();
     if (m >= 1000) {
@@ -430,7 +467,65 @@ class _MainScreenState extends State<MainScreen> {
   bool get _showGiftButton =>
       _appState != AppState.running && _appState != AppState.paused;
 
+  bool _isLightColor(Color color) => color.computeLuminance() > 0.5;
+
+  Widget _buildCategorySelector(GameProvider provider) {
+    final categories = provider.categories;
+    final selectedId = provider.selectedCategoryId;
+    final canSelect  = _appState == AppState.idle;
+    final displayCategories = canSelect
+        ? categories
+        : categories.where((c) => c.id == selectedId).toList();
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: displayCategories.map((cat) {
+          final isSelected = cat.id == selectedId;
+          return GestureDetector(
+            onTap: canSelect ? () => provider.selectCategory(cat.id) : null,
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? cat.color
+                    : cat.color.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: _isLightColor(cat.color)
+                      ? Colors.grey[400]!
+                      : cat.color,
+                  width: isSelected ? 2 : 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
+              child: Text(
+                cat.name,
+                style: TextStyle(
+                  color: isSelected
+                      ? (_isLightColor(cat.color) ? Colors.black87 : Colors.white)
+                      : (_isLightColor(cat.color) ? Colors.black87 : cat.color),
+                  fontSize: 13,
+                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   Widget _buildButtons() {
+    final provider = context.read<GameProvider>();
     switch (_appState) {
       case AppState.idle:
         return _singleButton("공부 시작하기", _btnBlue, _start);
@@ -438,7 +533,7 @@ class _MainScreenState extends State<MainScreen> {
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _smallButton("일시정지", _btnOrange, _pause),
+            _pauseButton(provider.remainingPauses),
             const SizedBox(width: 16),
             _smallButton("중지", _btnRed, _stop),
           ],
@@ -461,6 +556,33 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  Widget _pauseButton(int remaining) {
+    return ElevatedButton(
+      onPressed: _pause,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: _btnOrange,
+        padding: const EdgeInsets.symmetric(horizontal: 36, vertical: 10),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+          side: BorderSide(color: Color(0xFF2A3D1A), width: 2),
+        ),
+        elevation: 0,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text("일시정지",
+              style: TextStyle(
+                  fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)),
+          Text(
+            "($remaining/${GameProvider.maxPauseCount})",
+            style: const TextStyle(fontSize: 11, color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _singleButton(String label, Color color, VoidCallback onTap) {
     return ElevatedButton(
       onPressed: onTap,
@@ -473,11 +595,9 @@ class _MainScreenState extends State<MainScreen> {
         ),
         elevation: 0,
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-            fontSize: 22, color: Colors.white, fontWeight: FontWeight.bold),
-      ),
+      child: Text(label,
+          style: const TextStyle(
+              fontSize: 22, color: Colors.white, fontWeight: FontWeight.bold)),
     );
   }
 
@@ -493,256 +613,284 @@ class _MainScreenState extends State<MainScreen> {
         ),
         elevation: 0,
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-            fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold),
+      child: Text(label,
+          style: const TextStyle(
+              fontSize: 20, color: Colors.white, fontWeight: FontWeight.bold)),
+    );
+  }
+
+  Widget _topIconBtn(String emoji, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: _coinBadgeH,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF8B6914),
+          border: Border.all(color: const Color(0xFF5C4209), width: 2),
+        ),
+        child: Center(
+          child: Text(emoji, style: const TextStyle(fontSize: 20)),
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final money = context.watch<GameProvider>().money;
+    final provider   = context.watch<GameProvider>();
+    final money      = provider.money;
+    final themeColor = provider.themeColor;
 
-    return Scaffold(
-      drawer: Drawer(
-        width: MediaQuery.of(context).size.width * 0.45,
-        child: Container(
-          color: const Color(0xFFF5E6C8),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        drawer: Drawer(
+          width: MediaQuery.of(context).size.width * 0.45,
+          child: Container(
+            color: themeColor,
+            child: SafeArea(
+              child: Column(
+                children: [
+                  const SizedBox(height: 20),
+                  const Text("메뉴",
+                      style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: _darkGreen)),
+                  const Divider(color: Color(0xFF8B6914), thickness: 2),
+                  ListTile(
+                    leading: const Icon(Icons.store, color: _darkGreen),
+                    title: const Text("상점",
+                        style: TextStyle(
+                            color: _darkGreen, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => const ShopScreen()));
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.location_city, color: _darkGreen),
+                    title: const Text("마을 전경",
+                        style: TextStyle(
+                            color: _darkGreen, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      ScaffoldMessenger.of(context).clearSnackBars();
+                      Navigator.pop(context);
+                      Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => const TownScreen()));
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.bar_chart, color: _darkGreen),
+                    title: const Text("통계",
+                        style: TextStyle(
+                            color: _darkGreen, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(context,
+                          MaterialPageRoute(builder: (_) => const StatsScreen()));
+                    },
+                  ),
+                  const Spacer(),
+                  const Divider(color: Color(0xFF8B6914), thickness: 1),
+                  ListTile(
+                    leading: const Icon(Icons.settings, color: _darkGreen),
+                    title: const Text("설정",
+                        style: TextStyle(
+                            color: _darkGreen, fontWeight: FontWeight.bold)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(context,
+                          MaterialPageRoute(
+                              builder: (_) => const SettingsScreen()));
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        body: Container(
+          color: themeColor,
           child: SafeArea(
             child: Column(
               children: [
-                const SizedBox(height: 20),
-                const Text(
-                  "메뉴",
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: _darkGreen),
+                // ── 상단 ──
+                Expanded(
+                  flex: 1,
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        color: themeColor,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(height: _topOffset),
+                            SizedBox(
+                              width: _circleSize,
+                              height: _circleSize,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  CustomPaint(
+                                    size: Size(_circleSize, _circleSize),
+                                    painter: _CircleProgressPainter(
+                                        progress: _progress),
+                                  ),
+                                  SizedBox(
+                                    width: _characterSize,
+                                    height: _characterSize,
+                                    child: _currentImage == null
+                                        ? const SizedBox()
+                                        : CustomPaint(
+                                            painter: SpritePainter(
+                                              image: _currentImage!,
+                                              frame: _currentFrame,
+                                              totalFrames: _totalFrames,
+                                            ),
+                                          ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _statusMessage,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: _appState == AppState.fired ||
+                                        _appState == AppState.firedAnimating
+                                    ? 14
+                                    : 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Positioned(
+                        top: 8, left: 16,
+                        child: Builder(
+                          builder: (context) => IconButton(
+                            icon: const Icon(Icons.menu,
+                                color: _darkGreen, size: 28),
+                            onPressed: () => Scaffold.of(context).openDrawer(),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 8, right: 20,
+                        child: Row(
+                          children: [
+                            if (_showGiftButton) ...[
+                              _topIconBtn("📋", _showMissionPopup),
+                              const SizedBox(width: 8),
+                              _topIconBtn("🎁", _showAttendancePopup),
+                              const SizedBox(width: 8),
+                            ],
+                            Container(
+                              width: _coinBadgeW,
+                              height: _coinBadgeH,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF8B6914),
+                                border: Border.all(
+                                    color: const Color(0xFF5C4209), width: 2),
+                              ),
+                              child: Row(
+                                children: [
+                                  Image.asset(_coinAsset,
+                                      width: _coinIconSize,
+                                      height: _coinIconSize,
+                                      filterQuality: FilterQuality.none),
+                                  Expanded(
+                                    child: FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: Alignment.centerRight,
+                                      child: Text(
+                                        _formatMoney(money),
+                                        style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                const Divider(color: Color(0xFF8B6914), thickness: 2),
-                ListTile(
-                  leading: const Icon(Icons.store, color: _darkGreen),
-                  title: const Text("상점",
-                      style: TextStyle(
-                          color: _darkGreen, fontWeight: FontWeight.bold)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const ShopScreen()),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.location_city, color: _darkGreen),
-                  title: const Text("마을 전경",
-                      style: TextStyle(
-                          color: _darkGreen, fontWeight: FontWeight.bold)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const TownScreen()),
-                    );
-                  },
+
+                // ── 하단 ──
+                Expanded(
+                  flex: 1,
+                  child: Container(
+                    width: double.infinity,
+                    color: themeColor,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        GestureDetector(
+                          onTap: _appState == AppState.idle
+                              ? _showTimerPicker
+                              : null,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              border: _appState == AppState.idle
+                                  ? Border.all(color: _darkGreen, width: 2)
+                                  : null,
+                            ),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                _formatTime(_secondsRemaining),
+                                style: const TextStyle(
+                                  fontSize: 90,
+                                  fontWeight: FontWeight.bold,
+                                  fontFamily: 'NeoDunggeunmo',
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(_bottomText,
+                            style: const TextStyle(
+                                fontSize: 14, color: Color(0xFF6B4F1A))),
+                        const SizedBox(height: 12),
+                        _buildCategorySelector(provider),
+                        const SizedBox(height: 16),
+                        _buildButtons(),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
         ),
       ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // ──────────────────────────────────────────
-            // 상단 영역 (캐릭터 + 원형 진행바)
-            // ──────────────────────────────────────────
-            Expanded(
-              flex: 1,
-              child: Stack(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    color: _appState == AppState.running ? _bgRunning : _bgIdle,
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(height: _topOffset),
-                        SizedBox(
-                          width: _circleSize,
-                          height: _circleSize,
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              CustomPaint(
-                                size: Size(_circleSize, _circleSize),
-                                painter: _CircleProgressPainter(
-                                  progress: _progress,
-                                ),
-                              ),
-                              SizedBox(
-                                width: _characterSize,
-                                height: _characterSize,
-                                child: _currentImage == null
-                                    ? const SizedBox()
-                                    : CustomPaint(
-                                        painter: SpritePainter(
-                                          image: _currentImage!,
-                                          frame: _currentFrame,
-                                          totalFrames: _totalFrames,
-                                        ),
-                                      ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _statusMessage,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: _appState == AppState.fired ||
-                                    _appState == AppState.firedAnimating
-                                ? 14
-                                : 20,
-                            fontWeight: FontWeight.bold,
-                            color: _darkGreen,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 메뉴 버튼
-                  Positioned(
-                    top: 8,
-                    left: 16,
-                    child: Builder(
-                      builder: (context) => IconButton(
-                        icon: const Icon(Icons.menu, color: _darkGreen, size: 28),
-                        onPressed: () => Scaffold.of(context).openDrawer(),
-                      ),
-                    ),
-                  ),
-                  // 출석 + 코인 버튼
-                  Positioned(
-                    top: 8,
-                    right: 20,
-                    child: Row(
-                      children: [
-                        if (_showGiftButton) ...[
-                          GestureDetector(
-                            onTap: _showAttendancePopup,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF8B6914),
-                                border: Border.all(
-                                    color: const Color(0xFF5C4209), width: 2),
-                              ),
-                              child: const Text("🎁",
-                                  style: TextStyle(fontSize: 20)),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                        // 코인 뱃지
-                        Container(
-                          width: _coinBadgeW,
-                          height: _coinBadgeH,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF8B6914),
-                            border: Border.all(
-                                color: const Color(0xFF5C4209), width: 2),
-                          ),
-                          child: Row(
-                            children: [
-                              Image.asset(
-                                _coinAsset,
-                                width: _coinIconSize,
-                                height: _coinIconSize,
-                                filterQuality: FilterQuality.none,
-                              ),
-                              Expanded(
-                                child: Text(
-                                  _formatMoney(money), // ← 변경
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // ──────────────────────────────────────────
-            // 하단 영역 (타이머 + 버튼)
-            // ──────────────────────────────────────────
-            Expanded(
-              flex: 1,
-              child: Container(
-                width: double.infinity,
-                color: _bgBottom,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    GestureDetector(
-                      onTap: _appState == AppState.idle ? _showTimerPicker : null,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          border: _appState == AppState.idle
-                              ? Border.all(color: _darkGreen, width: 2)
-                              : null,
-                        ),
-                        child: Text(
-                          _formatTime(_secondsRemaining),
-                          style: const TextStyle(
-                            fontSize: 90,
-                            fontWeight: FontWeight.w200,
-                            fontFamily: 'Courier',
-                            color: _darkGreen,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      _bottomText,
-                      style: const TextStyle(
-                          fontSize: 14, color: Color(0xFF6B4F1A)),
-                    ),
-                    const SizedBox(height: 60),
-                    _buildButtons(),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
 
-// ──────────────────────────────────────────
-// 원형 진행바 페인터
-// ──────────────────────────────────────────
 class _CircleProgressPainter extends CustomPainter {
   final double progress;
-
   _CircleProgressPainter({required this.progress});
 
   @override
@@ -751,44 +899,32 @@ class _CircleProgressPainter extends CustomPainter {
     final radius = size.width / 2 - 8;
     const strokeWidth = 10.0;
 
-    canvas.drawCircle(
-      center,
-      radius,
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.15)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth,
-    );
+    canvas.drawCircle(center, radius,
+        Paint()
+          ..color = Colors.black.withValues(alpha: 0.15)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = strokeWidth);
 
     if (progress > 0) {
       canvas.drawArc(
         Rect.fromCircle(center: center, radius: radius),
-        -pi / 2,
-        2 * pi * progress,
-        false,
+        -pi / 2, 2 * pi * progress, false,
         Paint()
           ..color = const Color(0xFF4A9E4A)
           ..style = PaintingStyle.stroke
           ..strokeWidth = strokeWidth
           ..strokeCap = StrokeCap.butt,
       );
-
       final angle = -pi / 2 + 2 * pi * progress;
-      final dotX = center.dx + radius * cos(angle);
-      final dotY = center.dy + radius * sin(angle);
-      canvas.drawCircle(
-        Offset(dotX, dotY),
-        7,
-        Paint()..color = const Color(0xFF4A9E4A),
-      );
-      canvas.drawCircle(
-        Offset(dotX, dotY),
-        7,
-        Paint()
-          ..color = Colors.black.withValues(alpha: 0.3)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5,
-      );
+      final dotX  = center.dx + radius * cos(angle);
+      final dotY  = center.dy + radius * sin(angle);
+      canvas.drawCircle(Offset(dotX, dotY), 7,
+          Paint()..color = const Color(0xFF4A9E4A));
+      canvas.drawCircle(Offset(dotX, dotY), 7,
+          Paint()
+            ..color = Colors.black.withValues(alpha: 0.3)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5);
     }
   }
 
