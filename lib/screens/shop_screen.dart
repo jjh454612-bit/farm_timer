@@ -37,7 +37,7 @@ const Map<String, String> _buildingEffect = {
   'house':    '+10명',
   'oldapt':   '+25명',
   'apt':      '+40명',
-  'landmark': '+5명',
+  'landmark': '+150명',
   'park':     '+5% 행복',
   'towerpark':'+10% 행복',
   'pondpark': '+8% 행복',

@@ -528,7 +528,7 @@ class _MainScreenState extends State<MainScreen> {
     final provider = context.read<GameProvider>();
     switch (_appState) {
       case AppState.idle:
-        return _singleButton("공부 시작하기", _btnBlue, _start);
+        return _singleButton("${context.read<GameProvider>().selectedCategory?.name ?? '공부'} 시작하기", _btnBlue, _start);
       case AppState.running:
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -898,33 +898,58 @@ class _CircleProgressPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2 - 8;
     const strokeWidth = 10.0;
+    const segments = 30;
 
-    canvas.drawCircle(center, radius,
-        Paint()
-          ..color = Colors.black.withValues(alpha: 0.15)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = strokeWidth);
+    final bgPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.15)
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.square
+      ..style = PaintingStyle.stroke;
+
+    // 배경 40각형
+    final bgPath = Path();
+    for (int i = 0; i <= segments; i++) {
+      final a = -pi / 2 + (2 * pi * i / segments);
+      final p = Offset(center.dx + radius * cos(a), center.dy + radius * sin(a));
+      if (i == 0) { bgPath.moveTo(p.dx, p.dy); } else { bgPath.lineTo(p.dx, p.dy); }
+    }
+    canvas.drawPath(bgPath, bgPaint);
 
     if (progress > 0) {
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius),
-        -pi / 2, 2 * pi * progress, false,
-        Paint()
-          ..color = const Color(0xFF4A9E4A)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = strokeWidth
-          ..strokeCap = StrokeCap.butt,
-      );
-      final angle = -pi / 2 + 2 * pi * progress;
+      final fgPaint = Paint()
+        ..color = const Color(0xFF4A9E4A)
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.square
+        ..style = PaintingStyle.stroke;
+
+      final totalSegs = (progress * segments).floor();
+
+      if (totalSegs > 0) {
+        final fgPath = Path();
+        for (int i = 0; i <= totalSegs; i++) {
+          final a = -pi / 2 + (2 * pi * i / segments);
+          final p = Offset(center.dx + radius * cos(a), center.dy + radius * sin(a));
+          if (i == 0) { fgPath.moveTo(p.dx, p.dy); } else { fgPath.lineTo(p.dx, p.dy); }
+        }
+        canvas.drawPath(fgPath, fgPaint);
+      }
+
+      // 끝점 dot (작은 24각형)
+      final angle = -pi / 2 + 2 * pi * (totalSegs / segments);
       final dotX  = center.dx + radius * cos(angle);
       final dotY  = center.dy + radius * sin(angle);
-      canvas.drawCircle(Offset(dotX, dotY), 7,
-          Paint()..color = const Color(0xFF4A9E4A));
-      canvas.drawCircle(Offset(dotX, dotY), 7,
-          Paint()
-            ..color = Colors.black.withValues(alpha: 0.3)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.5);
+      const dotR  = 7.0;
+      final dotPath = Path();
+      for (int i = 0; i <= 10; i++) {
+        final a = 2 * pi * i / 10;
+        final p = Offset(dotX + dotR * cos(a), dotY + dotR * sin(a));
+        if (i == 0) { dotPath.moveTo(p.dx, p.dy); } else { dotPath.lineTo(p.dx, p.dy); }
+      }
+      canvas.drawPath(dotPath, Paint()..color = const Color(0xFF4A9E4A)..style = PaintingStyle.fill);
+      canvas.drawPath(dotPath, Paint()
+        ..color = Colors.black.withValues(alpha: 0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5);
     }
   }
 

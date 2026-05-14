@@ -199,7 +199,7 @@ class GameProvider extends ChangeNotifier {
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
 
-    _money              = prefs.getDouble('money') ?? 10000;
+    _money              = prefs.getDouble('money') ?? 1000000;
     _character          = prefs.getString('character') ?? 'cat';
     _landVouchers       = prefs.getInt('landVouchers') ?? 0;
     _totalLandPurchased = prefs.getInt('totalLandPurchased') ?? 0;

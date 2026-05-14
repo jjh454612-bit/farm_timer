@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/character_select_screen.dart';
+import 'screens/main_screen.dart';
 import 'providers/game_provider.dart';
 
 void main() async {
@@ -11,12 +13,17 @@ void main() async {
   final provider = GameProvider();
   await provider.load();
 
-  runApp(FarmTimerApp(provider: provider));
+  // 이미 캐릭터 선택한 적 있으면 바로 메인으로
+  final prefs = await SharedPreferences.getInstance();
+  final hasCharacter = prefs.getString('character') != null;
+
+  runApp(FarmTimerApp(provider: provider, hasCharacter: hasCharacter));
 }
 
 class FarmTimerApp extends StatelessWidget {
   final GameProvider provider;
-  const FarmTimerApp({super.key, required this.provider});
+  final bool hasCharacter;
+  const FarmTimerApp({super.key, required this.provider, required this.hasCharacter});
 
   @override
   Widget build(BuildContext context) {
@@ -73,7 +80,9 @@ class FarmTimerApp extends StatelessWidget {
             ),
           ),
         ),
-        home: const CharacterSelectScreen(),
+        home: hasCharacter
+            ? MainScreen(character: provider.character)
+            : const CharacterSelectScreen(),
       ),
     );
   }

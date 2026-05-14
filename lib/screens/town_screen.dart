@@ -20,6 +20,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
   String? _selectedBuilding;
   int? _previewTile;
   bool _previewRotated = false;
+  (int, int)? _previewLand;
 
   static const double _groundScale   = 2.0;
   static const double _buildingScale = 3.0;
@@ -57,7 +58,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
   static int _tileBase(int gx, int gy) => (gx + 50) * 1000 + gy * 4;
 
   double _groundLeft(int gx) => _originX + gx * _groundW / 2;
-  double _groundTop(int gy)  => _originY + gy * _groundH / 2;
+  double _groundTop(int gy)  => _originY + gy * (_groundH / 2 - 20);
 
   void _addGroundAnchors(Map<int, Offset> map, int gx, int gy) {
     final base = _tileBase(gx, gy);
@@ -69,17 +70,85 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
     map[base + 3] = Offset(256 + gl, 199 + gt);
   }
 
-  // ── 행복도 이모지/색상 ──
   String _happinessEmoji(int h) {
     if (h < 30) return "😢";
     if (h < 70) return "😐";
     return "😊";
   }
 
+
   late AnimationController _carController;
-  late Animation<Offset> _carAnim;
   late AnimationController _carFlipController;
-  late Animation<Offset> _carFlipAnim;
+
+  // ── 차 경로: X자 도로 두 팔 ──
+  // car1: gy==gx 대각선 (오른쪽 팔, gx 내림차순)
+  // car2: gy==-gx 대각선 (왼쪽 팔, gx 내림차순)
+  // ── 모든 대각선 경로 ──
+  Offset _interpolate(List<Offset> pts, double t) {
+    if (pts.length == 1) return pts[0];
+    final n = pts.length - 1;
+    final i = (t * n).floor().clamp(0, n - 1);
+    final f = t * n - i;
+    return Offset(pts[i].dx + (pts[i+1].dx - pts[i].dx) * f,
+                  pts[i].dy + (pts[i+1].dy - pts[i].dy) * f);
+  }
+
+  // ── 모든 대각선 경로 ──
+  // B대각선(gy-gx=k): car.png, 오른쪽→왼쪽 위
+  // A대각선(gy+gx=k): car1-1.png, 왼쪽→오른쪽 위
+  List<({List<Offset> pts, double phase, bool isFlip})> _allCarRoutes(Set<String> groundGrid) {
+    final result = <({List<Offset> pts, double phase, bool isFlip})>[];
+
+    // B대각선 그룹 (gy - gx = k), car.png
+    final bGroups = <int, List<(int, int)>>{};
+    for (final pos in groundGrid) {
+      final p = pos.split(',');
+      final gx = int.parse(p[0]); final gy = int.parse(p[1]);
+      final k = gy - gx;
+      bGroups.putIfAbsent(k, () => []).add((gx, gy));
+    }
+    final bKeys = bGroups.keys.toList()..sort();
+
+    // A대각선 그룹 (gy + gx = k), car1-1.png
+    final aGroups = <int, List<(int, int)>>{};
+    for (final pos in groundGrid) {
+      final p = pos.split(',');
+      final gx = int.parse(p[0]); final gy = int.parse(p[1]);
+      final k = gy + gx;
+      aGroups.putIfAbsent(k, () => []).add((gx, gy));
+    }
+    final aKeys = aGroups.keys.toList()..sort();
+
+    // 전체 차 개수 기준 균등 위상 배분
+    final total = bKeys.length + aKeys.length;
+    int carIdx = 0;
+
+    for (int i = 0; i < bKeys.length; i++, carIdx++) {
+      final tiles = bGroups[bKeys[i]]!..sort((a, b) => b.$1.compareTo(a.$1));
+      final pts = <Offset>[];
+      bool first = true;
+      for (final t in tiles) {
+        final gx = t.$1; final gy = t.$2;
+        if (first) { pts.add(Offset(384.0 + gx*256, 692.0 + gy*128)); first = false; }
+        pts.add(Offset(128.0 + gx*256, 564.0 + gy*128));
+      }
+      result.add((pts: pts, phase: carIdx / total, isFlip: false));
+    }
+
+    for (int i = 0; i < aKeys.length; i++, carIdx++) {
+      final tiles = aGroups[aKeys[i]]!..sort((a, b) => a.$1.compareTo(b.$1));
+      final pts = <Offset>[];
+      bool first = true;
+      for (final t in tiles) {
+        final gx = t.$1; final gy = t.$2;
+        if (first) { pts.add(Offset(128.0 + gx*256, 692.0 + gy*128)); first = false; }
+        pts.add(Offset(384.0 + gx*256, 564.0 + gy*128));
+      }
+      result.add((pts: pts, phase: carIdx / total, isFlip: true));
+    }
+
+    return result;
+  }
 
   final TransformationController _transformController = TransformationController();
 
@@ -92,35 +161,13 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(seconds: 16),
     )..repeat();
-    _carAnim = Tween<Offset>(
-      begin: const Offset(400, 180 + _extraH),
-      end: const Offset(130, 50 + _extraH),
-    ).animate(CurvedAnimation(parent: _carController, curve: Curves.linear));
 
     _carFlipController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 16),
-    )..repeat();
-    _carFlipAnim = TweenSequence<Offset>([
-      TweenSequenceItem(
-        tween: Tween(
-          begin: const Offset(160, 180 + _extraH),
-          end: const Offset(226, 146 + _extraH),
-        ),
-        weight: 40,
-      ),
-      TweenSequenceItem(
-        tween: ConstantTween(const Offset(226, 146 + _extraH)),
-        weight: 20,
-      ),
-      TweenSequenceItem(
-        tween: Tween(
-          begin: const Offset(226, 146 + _extraH),
-          end: const Offset(400, 60 + _extraH),
-        ),
-        weight: 40,
-      ),
-    ]).animate(CurvedAnimation(parent: _carFlipController, curve: Curves.linear));
+    );
+    _carFlipController.value = 0.5;
+    _carFlipController.repeat();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final size = MediaQuery.of(context).size;
@@ -214,13 +261,27 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
     setState(() => _previewRotated = !_previewRotated);
   }
 
-  void _useLandVoucher(int gx, int gy) {
-    context.read<GameProvider>().useLandVoucher(gx, gy);
-    setState(() => _selectedBuilding = null);
+  void _onLandTap(int nx, int ny) {
+    setState(() => _previewLand = (nx, ny));
+  }
+
+  void _confirmLand() {
+    if (_previewLand == null) return;
+    context.read<GameProvider>().useLandVoucher(_previewLand!.$1, _previewLand!.$2);
+    setState(() { _previewLand = null; _selectedBuilding = null; });
+  }
+
+  void _cancelLand() {
+    setState(() => _previewLand = null);
   }
 
   void _resetSelection() {
-    setState(() { _selectedBuilding = null; _previewTile = null; _previewRotated = false; });
+    setState(() {
+      _selectedBuilding = null;
+      _previewTile = null;
+      _previewRotated = false;
+      _previewLand = null;
+    });
   }
 
   Widget _buildCar(Offset pos, ui.Image image) {
@@ -291,8 +352,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       ),
       body: Column(
         children: [
-
-          // ── 마을 뷰 ──
           Expanded(
             flex: 6,
             child: Stack(
@@ -320,7 +379,12 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            for (final pos in groundGrid) ...[
+                            for (final pos in (groundGrid.toList()
+                              ..sort((a, b) {
+                                final ay = int.parse(a.split(',')[1]);
+                                final by = int.parse(b.split(',')[1]);
+                                return ay.compareTo(by);
+                              }))) ...[
                               () {
                                 final parts = pos.split(',');
                                 final gx = int.parse(parts[0]);
@@ -336,52 +400,63 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                               }(),
                             ],
                             AnimatedBuilder(
-                              animation: Listenable.merge([_carAnim, _carFlipAnim]),
+                              animation: _carController,
                               builder: (context, _) {
-                                final rawCar     = _carAnim.value;
-                                final rawCarFlip = _carFlipAnim.value;
-                                final carPos     = Offset(rawCar.dx + _originX,     rawCar.dy);
-                                final carFlipPos = Offset(rawCarFlip.dx + _originX, rawCarFlip.dy);
+                                final routes = _allCarRoutes(groundGrid);
+                                final t1 = _carController.value;
 
-                                bool isOnMainGround(Offset pos) =>
-                                    pos.dx >= _originX && pos.dx <= _originX + _groundW &&
-                                    pos.dy >= _originY && pos.dy <= _originY + _groundH;
+                                // 각 경로별 차 위치 계산
+                                final carPositions = routes.map((r) {
+                                  final t = (t1 + r.phase) % 1.0;
+                                  final raw = _interpolate(r.pts, t);
+                                  return (pos: Offset(raw.dx + _originX, raw.dy), isFlip: r.isFlip);
+                                }).toList();
 
                                 final sorted = tileAnchors.keys.toList()
                                   ..sort((a, b) => tileAnchors[a]!.dy.compareTo(tileAnchors[b]!.dy));
 
-                                bool carDrawn = false, carFlipDrawn = false;
+                                final drawnCars = List.filled(carPositions.length, false);
                                 final widgets = <Widget>[];
 
                                 for (final slot in expansionSlots) {
                                   final nx = slot.$1;
                                   final ny = slot.$2;
+                                  final isPreview = _previewLand == slot;
                                   widgets.add(Positioned(
                                     left: _groundLeft(nx),
                                     top: _groundTop(ny),
                                     child: GestureDetector(
-                                      onTap: () => _useLandVoucher(nx, ny),
+                                      onTap: () => _onLandTap(nx, ny),
                                       child: CustomPaint(
-                                        painter: _GroundHighlightPainter(),
+                                        painter: _GroundHighlightPainter(isPreview: isPreview),
                                         size: const Size(_groundW, _groundH),
                                       ),
                                     ),
                                   ));
+
+                                  if (isPreview) {
+                                    widgets.add(Positioned(
+                                      left: _groundLeft(nx) + _groundW / 2 - 36,
+                                      top: _groundTop(ny) + _groundH / 2,
+                                      child: Row(
+                                        children: [
+                                          _actionBtn(icon: Icons.check, color: Colors.green, onTap: _confirmLand),
+                                          const SizedBox(width: 8),
+                                          _actionBtn(icon: Icons.close, color: Colors.red,   onTap: _cancelLand),
+                                        ],
+                                      ),
+                                    ));
+                                  }
                                 }
 
                                 for (final idx in sorted) {
                                   final anchor = tileAnchors[idx]!;
 
-                                  if (!carDrawn && carPos.dy < anchor.dy) {
-                                    carDrawn = true;
-                                    if (_carImage != null && isOnMainGround(carPos)) {
-                                      widgets.add(_buildCar(carPos, _carImage!));
-                                    }
-                                  }
-                                  if (!carFlipDrawn && carFlipPos.dy < anchor.dy) {
-                                    carFlipDrawn = true;
-                                    if (_carFlipImage != null && isOnMainGround(carFlipPos)) {
-                                      widgets.add(_buildCar(carFlipPos, _carFlipImage!));
+                                  for (int ci = 0; ci < carPositions.length; ci++) {
+                                    if (!drawnCars[ci] && carPositions[ci].pos.dy < anchor.dy) {
+                                      drawnCars[ci] = true;
+                                      final img = carPositions[ci].isFlip ? _carFlipImage : _carImage;
+                                      if (img != null) widgets.add(_buildCar(carPositions[ci].pos, img));
                                     }
                                   }
 
@@ -435,11 +510,11 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                                   }
                                 }
 
-                                if (!carDrawn && _carImage != null && isOnMainGround(carPos)) {
-                                  widgets.add(_buildCar(carPos, _carImage!));
-                                }
-                                if (!carFlipDrawn && _carFlipImage != null && isOnMainGround(carFlipPos)) {
-                                  widgets.add(_buildCar(carFlipPos, _carFlipImage!));
+                                for (int ci = 0; ci < carPositions.length; ci++) {
+                                  if (!drawnCars[ci]) {
+                                    final img = carPositions[ci].isFlip ? _carFlipImage : _carImage;
+                                    if (img != null) widgets.add(_buildCar(carPositions[ci].pos, img));
+                                  }
                                 }
 
                                 if (!_isLandMode && _previewTile != null &&
@@ -468,16 +543,12 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                       ),
                     ),
                 ),
-                // ── 인구/행복도 캡슐 (오른쪽 상단) ──
                 Positioned(
                   top: 12, right: 12,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      _statCapsule(
-                        "👥 $population명",
-                        const Color(0xFF4A7FBD),
-                      ),
+                      _statCapsule("👥 $population명", const Color(0xFF4A7FBD)),
                       const SizedBox(height: 6),
                       _statCapsule(
                         "${_happinessEmoji(happiness)} $happiness%",
@@ -494,7 +565,6 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
             ),
           ),
 
-          // ── 하단 패널 ──
           SafeArea(
             top: false,
             child: Container(
@@ -567,13 +637,9 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
         color: color.withValues(alpha: 0.85),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(
-        text,
-        style: const TextStyle(
-            color: Colors.white,
-            fontSize: 13,
-            fontWeight: FontWeight.bold),
-      ),
+      child: Text(text,
+          style: const TextStyle(
+              color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
     );
   }
 
@@ -584,6 +650,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
         _selectedBuilding = isSelected ? null : 'land';
         _previewTile = null;
         _previewRotated = false;
+        _previewLand = null;
       }),
       child: Container(
         decoration: BoxDecoration(
@@ -613,11 +680,9 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                     color: Colors.orange[600],
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(
-                    "$count",
-                    style: const TextStyle(
-                        fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
+                  child: Text("$count",
+                      style: const TextStyle(
+                          fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
           ],
@@ -653,6 +718,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
         _selectedBuilding = isSelected ? null : id;
         _previewTile = null;
         _previewRotated = false;
+        _previewLand = null;
       }),
       child: Container(
         decoration: BoxDecoration(
@@ -668,12 +734,10 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
           children: [
             Image.asset(assetPath, width: 32, height: 32, filterQuality: FilterQuality.none),
             const SizedBox(height: 4),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 10),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
-            ),
+            Text(label,
+                style: const TextStyle(fontSize: 10),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1),
           ],
         ),
       ),
@@ -725,23 +789,28 @@ class _HighlightPainter extends CustomPainter {
 }
 
 class _GroundHighlightPainter extends CustomPainter {
+  final bool isPreview;
+  const _GroundHighlightPainter({this.isPreview = false});
+
   @override
   void paint(Canvas canvas, Size size) {
     final path = Path()
-      ..moveTo(size.width / 2, 0)
-      ..lineTo(size.width, size.height / 2)
-      ..lineTo(size.width / 2, size.height)
-      ..lineTo(0, size.height / 2)
+      ..moveTo(256, -1)
+      ..lineTo(508, 124)
+      ..lineTo(256, 249)
+      ..lineTo(5, 124)
       ..close();
+    final fillColor   = isPreview ? Colors.green  : Colors.orange;
+    final strokeColor = isPreview ? Colors.green[700]! : Colors.orange[700]!;
     canvas.drawPath(path, Paint()
-      ..color = Colors.orange.withValues(alpha: 0.4)
+      ..color = fillColor.withValues(alpha: 0.4)
       ..style = PaintingStyle.fill);
     canvas.drawPath(path, Paint()
-      ..color = Colors.orange[700]!
+      ..color = strokeColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4);
   }
 
   @override
-  bool shouldRepaint(_GroundHighlightPainter old) => false;
+  bool shouldRepaint(_GroundHighlightPainter old) => old.isPreview != isPreview;
 }
