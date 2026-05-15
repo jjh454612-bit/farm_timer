@@ -2,22 +2,39 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'screens/character_select_screen.dart';
 import 'screens/main_screen.dart';
 import 'providers/game_provider.dart';
+import 'timer_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
+  // 백그라운드 서비스 초기화
+  await initTimerService();
+
+  // 권한 요청
+  await _requestPermissions();
+
   final provider = GameProvider();
   await provider.load();
 
-  // 이미 캐릭터 선택한 적 있으면 바로 메인으로
   final prefs = await SharedPreferences.getInstance();
   final hasCharacter = prefs.getString('character') != null;
 
   runApp(FarmTimerApp(provider: provider, hasCharacter: hasCharacter));
+}
+
+Future<void> _requestPermissions() async {
+  // 알림 권한
+  await Permission.notification.request();
+
+  // 배터리 최적화 예외 (백그라운드 실행 유지)
+  if (await Permission.ignoreBatteryOptimizations.isDenied) {
+    await Permission.ignoreBatteryOptimizations.request();
+  }
 }
 
 class FarmTimerApp extends StatelessWidget {

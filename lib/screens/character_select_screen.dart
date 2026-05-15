@@ -5,7 +5,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import '../widgets/sprite_painter.dart';
 import '../providers/game_provider.dart';
-import 'main_screen.dart';
+import 'tutorial_screen.dart';
 
 class CharacterSelectScreen extends StatefulWidget {
   const CharacterSelectScreen({super.key});
@@ -78,13 +78,14 @@ class _CharacterSelectScreenState extends State<CharacterSelectScreen> {
           ),
           ElevatedButton(
             onPressed: () {
-              context.read<GameProvider>().setCharacter(_selected!); // ← 추가
+              context.read<GameProvider>().setCharacter(_selected!);
               Navigator.pop(context);
               _frameTimer?.cancel();
+              // 튜토리얼로 이동
               Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => MainScreen(character: _selected!),
+                  builder: (_) => TutorialScreen(character: _selected!),
                 ),
               );
             },

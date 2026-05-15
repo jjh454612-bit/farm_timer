@@ -1,8 +1,10 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui' as ui;
 import '../providers/game_provider.dart';
+import '../widgets/sprite_painter.dart';
 
 class TownScreen extends StatefulWidget {
   const TownScreen({super.key});
@@ -15,12 +17,18 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
   ui.Image? _groundImage;
   ui.Image? _carImage;
   ui.Image? _carFlipImage;
+  ui.Image? _dogImage;
+  ui.Image? _dogFlipImage;
   final Map<String, ui.Image?> _buildingImages = {};
+
+  late AnimationController _dogController;
 
   String? _selectedBuilding;
   int? _previewTile;
   bool _previewRotated = false;
   (int, int)? _previewLand;
+  bool _demolishMode = false;
+  final GlobalKey _bottomPanelKey = GlobalKey();
 
   static const double _groundScale   = 2.0;
   static const double _buildingScale = 3.0;
@@ -29,9 +37,9 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
 
   static const double _groundW = 256 * _groundScale;
   static const double _groundH = 148 * _groundScale;
-  static const double _extraH  = 500;
+  static const double _extraH  = 5000;
 
-  static const double _canvasSize = 5000;
+  static const double _canvasSize = 15000;
   static const double _originX = _canvasSize / 2 - _groundW / 2;
   static const double _originY = _extraH;
 
@@ -43,16 +51,19 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
   static const Set<String> _noRotation = {'towerpark'};
 
   static const Map<String, Map<String, String>> _buildingInfo = {
-    'house':     {'asset': 'assets/house1.png',    'label': '집'},
-    'park':      {'asset': 'assets/park.png',      'label': '공원'},
-    'police':    {'asset': 'assets/police.png',    'label': '경찰서'},
-    'hospital':  {'asset': 'assets/hospital.png',  'label': '병원'},
-    'towerpark': {'asset': 'assets/towerpark.png', 'label': '탑 공원'},
-    'fire':      {'asset': 'assets/fire.png',      'label': '소방서'},
-    'landmark':  {'asset': 'assets/landmark.png',  'label': '랜드마크'},
-    'pondpark':  {'asset': 'assets/pondpark.png',  'label': '연못공원'},
-    'oldapt':    {'asset': 'assets/oldapt.png',    'label': '구형아파트'},
-    'apt':       {'asset': 'assets/apt.png',       'label': '아파트'},
+    'tthouse':     {'asset': 'assets/tthouse.png',     'label': '빨간 지붕 집'},
+    'house':       {'asset': 'assets/house1.png',      'label': '집'},
+    'modernhouse': {'asset': 'assets/modernhouse.png', 'label': '모던하우스'},
+    'park':        {'asset': 'assets/park.png',        'label': '공원'},
+    'police':      {'asset': 'assets/police.png',      'label': '경찰서'},
+    'hospital':    {'asset': 'assets/hospital.png',    'label': '병원'},
+    'towerpark':   {'asset': 'assets/towerpark.png',   'label': '탑 공원'},
+    'fire':        {'asset': 'assets/fire.png',        'label': '소방서'},
+    'landmark':    {'asset': 'assets/landmark.png',    'label': '랜드마크'},
+    'landmark2':   {'asset': 'assets/landmark2.png',   'label': '초고층빌딩'},
+    'pondpark':    {'asset': 'assets/pondpark.png',    'label': '연못공원'},
+    'oldapt':      {'asset': 'assets/oldapt.png',      'label': '구형아파트'},
+    'apt':         {'asset': 'assets/apt.png',         'label': '아파트'},
   };
 
   static int _tileBase(int gx, int gy) => (gx + 50) * 1000 + gy * 4;
@@ -71,20 +82,203 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
   }
 
   String _happinessEmoji(int h) {
-    if (h < 30) return "😢";
-    if (h < 70) return "😐";
-    return "😊";
+    if (h < 30) return "\ud83d\ude22";
+    if (h < 70) return "\ud83d\ude10";
+    return "\ud83d\ude0a";
   }
 
+  // \u2500\u2500 \ucc28 \uacbd\ub85c \uacc4\uc0b0 \u2500\u2500
+  // groundGrid \uae30\ubc18\uc73c\ub85c \uac00\uc7a5 \uc624\ub978\ucabd~\uac00\uc7a5 \uc67c\ucabd \ud0c0\uc77c\uc744 \uc787\ub294 \uc9c1\uc120 \uacbd\ub85c
+  // (0,0)\ub9cc \uc788\uc744 \ub54c: \uae30\uc874 (400,680)\u2192(130,550) \uadf8\ub300\ub85c \uc720\uc9c0
+  // x\ub294 _originX \uae30\uc900 \uc0c1\ub300\uac12, y\ub294 \uc808\ub300\uac12
+  // 경로별 차 이미지 랜덤 배정 (마을 전경 진입 시 결정)
+  // carIdx별 차 종류 (마을 진입 시 랜덤)
+  late List<int> _carTypes;
 
-  late AnimationController _carController;
-  late AnimationController _carFlipController;
+  List<({List<Offset> pts, double phase, bool isFlip, int carType})> _allCarRoutes(Set<String> groundGrid) {
+    final result = <({List<Offset> pts, double phase, bool isFlip, int carType})>[];
 
-  // ── 차 경로: X자 도로 두 팔 ──
-  // car1: gy==gx 대각선 (오른쪽 팔, gx 내림차순)
-  // car2: gy==-gx 대각선 (왼쪽 팔, gx 내림차순)
-  // ── 모든 대각선 경로 ──
-  Offset _interpolate(List<Offset> pts, double t) {
+    final bGroups = <int, List<(int,int)>>{};
+    for (final pos in groundGrid) {
+      final p = pos.split(',');
+      final gx = int.parse(p[0]); final gy = int.parse(p[1]);
+      bGroups.putIfAbsent(gy - gx, () => []).add((gx, gy));
+    }
+    final bKeys = bGroups.keys.toList()..sort();
+
+    final aGroups = <int, List<(int,int)>>{};
+    for (final pos in groundGrid) {
+      final p = pos.split(',');
+      final gx = int.parse(p[0]); final gy = int.parse(p[1]);
+      aGroups.putIfAbsent(gy + gx, () => []).add((gx, gy));
+    }
+    final aKeys = aGroups.keys.toList()..sort();
+
+    final total = (bKeys.length + aKeys.length) * 2;
+    int carIdx = 0;
+
+    for (final k in bKeys) {
+      final tiles = bGroups[k]!..sort((a, b) => b.$1.compareTo(a.$1));
+      final pts = <Offset>[];
+      bool first = true;
+      for (final t in tiles) {
+        final gx = t.$1; final gy = t.$2;
+        if (first) { pts.add(Offset(384.0 + gx*256, (192 + _extraH + gy*128).toDouble())); first = false; }
+        pts.add(Offset(128.0 + gx*256, (64 + _extraH + gy*128).toDouble()));
+      }
+      final ct1 = carIdx < _carTypes.length ? _carTypes[carIdx] : 0;
+      final ct2 = (carIdx + 1) < _carTypes.length ? _carTypes[carIdx + 1] : 1;
+      result.add((pts: pts, phase: carIdx / total,       isFlip: false, carType: ct1));
+      result.add((pts: pts, phase: (carIdx + 1) / total, isFlip: false, carType: ct2));
+      carIdx += 2;
+    }
+
+    for (final k in aKeys) {
+      final tiles = aGroups[k]!..sort((a, b) => a.$1.compareTo(b.$1));
+      final pts = <Offset>[];
+      bool first = true;
+      for (final t in tiles) {
+        final gx = t.$1; final gy = t.$2;
+        if (first) { pts.add(Offset(128.0 + gx*256, (192 + _extraH + gy*128).toDouble())); first = false; }
+        pts.add(Offset(384.0 + gx*256, (64 + _extraH + gy*128).toDouble()));
+      }
+      final ct1 = carIdx < _carTypes.length ? _carTypes[carIdx] : 0;
+      final ct2 = (carIdx + 1) < _carTypes.length ? _carTypes[carIdx + 1] : 1;
+      result.add((pts: pts, phase: carIdx / total,       isFlip: true, carType: ct1));
+      result.add((pts: pts, phase: (carIdx + 1) / total, isFlip: true, carType: ct2));
+      carIdx += 2;
+    }
+
+    return result;
+  }
+
+  // ── 강아지 경로: 차랑 동일, y만 +64 ──
+  List<({List<Offset> pts, double phase, bool isFlip})> _allDogRoutes(Set<String> groundGrid) {
+    final routes = _allCarRoutes(groundGrid);
+    // 기존 방향 (차랑 같은 방향)
+    final forward = routes.map((r) => (
+      pts: r.pts.map((p) => Offset(p.dx, p.dy - 32)).toList(),
+      phase: r.phase,
+      isFlip: r.isFlip,
+    )).toList();
+    // 반대 방향
+    final reverse = routes.map((r) => (
+      pts: r.pts.reversed.map((p) => Offset(p.dx, p.dy + 12)).toList(),
+      phase: (r.phase + 0.25) % 1.0,
+      isFlip: !r.isFlip,
+    )).toList();
+    return [...forward, ...reverse];
+  }
+
+  Widget _buildDog(Offset pos, ui.Image image, int frame) {
+    const dogSize = 24.0;
+    return Positioned(
+      left: pos.dx - dogSize / 2,
+      top:  pos.dy - dogSize / 2,
+      child: CustomPaint(
+        painter: SpritePainter(image: image, frame: frame, totalFrames: 6),
+        size: const Size(dogSize, dogSize),
+      ),
+    );
+  }
+
+  // ── 강아지 위치 계산 (별도 메서드) ──
+  List<({Offset pos, ui.Image? img, int frame})> _computeDogPositions(
+      Set<String> groundGrid, int population) {
+    final dogRoutes = _allDogRoutes(groundGrid);
+    final dt = _dogController.value;
+    final dogFrame = (dt * 128).floor() % 6;
+    final dogCount = ((population / 50).floor() + 1) * 8;
+    final maxDogs  = dogCount.clamp(8, 48);
+    return dogRoutes.take(maxDogs).map((r) {
+      final t   = (dt + r.phase) % 1.0;
+      final raw = _getCarOffset(r.pts, t);
+      final img = r.isFlip ? _dogFlipImage : _dogImage;
+      return (pos: Offset(raw.dx + _originX, raw.dy), img: img, frame: dogFrame);
+    }).toList();
+  }
+
+  // ── 차 위치 계산 (별도 메서드) ──
+  List<({Offset pos, ui.Image? img})> _computeCarPositions(Set<String> groundGrid) {
+    final routes = _allCarRoutes(groundGrid);
+    final t1 = _carController.value;
+    return routes.map((r) {
+      final t   = (t1 + r.phase) % 1.0;
+      final raw = _getCarOffset(r.pts, t);
+      ui.Image? img;
+      if (r.isFlip) {
+        img = r.carType == 2 ? _buildingImages['_car3-1']
+            : r.carType == 1 ? _buildingImages['_car2-1']
+            : _carFlipImage;
+      } else {
+        img = r.carType == 2 ? _buildingImages['_car3']
+            : r.carType == 1 ? _buildingImages['_car2']
+            : _carImage;
+      }
+      return (pos: Offset(raw.dx + _originX, raw.dy), img: img);
+    }).toList();
+  }
+
+  // ── 철거 모드: 탭 좌표로 건물 찾기 (앞→뒤 순서) ──
+  void _onDemolishTap(TapUpDetails details, Map<int, Offset> tileAnchors, GameProvider provider) {
+    final matrix = _transformController.value;
+    final inverse = Matrix4.tryInvert(matrix);
+    if (inverse == null) return;
+
+    // 탭 좌표를 캔버스 좌표로 변환
+    final tap = MatrixUtils.transformPoint(inverse, details.localPosition);
+
+    // 앞쪽(y 큰 것)부터 체크
+    final sortedEntries = provider.placedBuildings.entries.toList()
+      ..sort((a, b) {
+        final ay = tileAnchors[a.key]?.dy ?? 0;
+        final by = tileAnchors[b.key]?.dy ?? 0;
+        return by.compareTo(ay); // 내림차순 = 앞→뒤
+      });
+
+    for (final entry in sortedEntries) {
+      final anchor = tileAnchors[entry.key];
+      if (anchor == null) continue;
+      final buildingId = entry.value;
+      final key = _noRotation.contains(buildingId)
+          ? buildingId
+          : provider.rotatedTiles.contains(entry.key) ? '$buildingId-1' : buildingId;
+      final bh = _getBuildingH(key);
+      final rect = Rect.fromLTWH(
+        anchor.dx - _bw / 2,
+        anchor.dy - bh + _th / 2,
+        _bw,
+        bh,
+      );
+      if (rect.contains(tap)) {
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text("🔨 철거"),
+            content: const Text("건물을 철거하시겠습니까?"),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("아니요"),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  context.read<GameProvider>().demolishBuilding(entry.key);
+                  Navigator.pop(context);
+                  setState(() => _demolishMode = false);
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text("예", style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        );
+        return; // 가장 앞 건물만 처리
+      }
+    }
+  }
+
+  Offset _getCarOffset(List<Offset> pts, double t) {
     if (pts.length == 1) return pts[0];
     final n = pts.length - 1;
     final i = (t * n).floor().clamp(0, n - 1);
@@ -93,62 +287,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                   pts[i].dy + (pts[i+1].dy - pts[i].dy) * f);
   }
 
-  // ── 모든 대각선 경로 ──
-  // B대각선(gy-gx=k): car.png, 오른쪽→왼쪽 위
-  // A대각선(gy+gx=k): car1-1.png, 왼쪽→오른쪽 위
-  List<({List<Offset> pts, double phase, bool isFlip})> _allCarRoutes(Set<String> groundGrid) {
-    final result = <({List<Offset> pts, double phase, bool isFlip})>[];
-
-    // B대각선 그룹 (gy - gx = k), car.png
-    final bGroups = <int, List<(int, int)>>{};
-    for (final pos in groundGrid) {
-      final p = pos.split(',');
-      final gx = int.parse(p[0]); final gy = int.parse(p[1]);
-      final k = gy - gx;
-      bGroups.putIfAbsent(k, () => []).add((gx, gy));
-    }
-    final bKeys = bGroups.keys.toList()..sort();
-
-    // A대각선 그룹 (gy + gx = k), car1-1.png
-    final aGroups = <int, List<(int, int)>>{};
-    for (final pos in groundGrid) {
-      final p = pos.split(',');
-      final gx = int.parse(p[0]); final gy = int.parse(p[1]);
-      final k = gy + gx;
-      aGroups.putIfAbsent(k, () => []).add((gx, gy));
-    }
-    final aKeys = aGroups.keys.toList()..sort();
-
-    // 전체 차 개수 기준 균등 위상 배분
-    final total = bKeys.length + aKeys.length;
-    int carIdx = 0;
-
-    for (int i = 0; i < bKeys.length; i++, carIdx++) {
-      final tiles = bGroups[bKeys[i]]!..sort((a, b) => b.$1.compareTo(a.$1));
-      final pts = <Offset>[];
-      bool first = true;
-      for (final t in tiles) {
-        final gx = t.$1; final gy = t.$2;
-        if (first) { pts.add(Offset(384.0 + gx*256, 692.0 + gy*128)); first = false; }
-        pts.add(Offset(128.0 + gx*256, 564.0 + gy*128));
-      }
-      result.add((pts: pts, phase: carIdx / total, isFlip: false));
-    }
-
-    for (int i = 0; i < aKeys.length; i++, carIdx++) {
-      final tiles = aGroups[aKeys[i]]!..sort((a, b) => a.$1.compareTo(b.$1));
-      final pts = <Offset>[];
-      bool first = true;
-      for (final t in tiles) {
-        final gx = t.$1; final gy = t.$2;
-        if (first) { pts.add(Offset(128.0 + gx*256, 692.0 + gy*128)); first = false; }
-        pts.add(Offset(384.0 + gx*256, 564.0 + gy*128));
-      }
-      result.add((pts: pts, phase: carIdx / total, isFlip: true));
-    }
-
-    return result;
-  }
+  late AnimationController _carController;
 
   final TransformationController _transformController = TransformationController();
 
@@ -157,18 +296,34 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
     super.initState();
     _loadImages();
 
+    // 경로별 차 종류 랜덤 배정
+    final rng = Random();
+    final groundGrid = context.read<GameProvider>().groundGrid;
+    final bKeys = <int>{};
+    final aKeys = <int>{};
+    for (final pos in groundGrid) {
+      final p = pos.split(',');
+      final gx = int.parse(p[0]); final gy = int.parse(p[1]);
+      bKeys.add(gy - gx);
+      aKeys.add(gy + gx);
+    }
+    final totalCars = (bKeys.length + aKeys.length) * 2;
+    // 전체 차 개수만큼 0~2 랜덤, 모든 종류 골고루 나오게 섞기
+    final types = List.generate(totalCars, (i) => i % 3);
+    types.shuffle(rng);
+    _carTypes = types;
+
     _carController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 16),
     )..repeat();
 
-    _carFlipController = AnimationController(
+    _dogController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 16),
-    );
-    _carFlipController.value = 0.5;
-    _carFlipController.repeat();
+      duration: const Duration(seconds: 24),
+    )..repeat();
 
+    // flip \ucc28\ub294 0.5 \uc704\uc0c1 \ucc28\uc774 (\ubc18\ub300\ud3b8\uc5d0\uc11c \uc2dc\uc791)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final size = MediaQuery.of(context).size;
       _transformController.value = Matrix4.translationValues(
@@ -182,7 +337,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _carController.dispose();
-    _carFlipController.dispose();
+    _dogController.dispose();
     _transformController.dispose();
     super.dispose();
   }
@@ -198,7 +353,19 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       _groundImage  = await _loadImg('assets/ground.png');
       _carImage     = await _loadImg('assets/car.png');
       _carFlipImage = await _loadImg('assets/car1-1.png');
-      _buildingImages['house']      = await _loadImg('assets/house1.png');
+      _dogImage     = await _loadImg('assets/dog1.png');
+      _dogFlipImage = await _loadImg('assets/dog1-1.png');
+      _buildingImages['_car2']    = await _loadImg('assets/car2.png');
+      _buildingImages['_car2-1']  = await _loadImg('assets/car2-1.png');
+      _buildingImages['_car3']    = await _loadImg('assets/car3.png');
+      _buildingImages['_car3-1']  = await _loadImg('assets/car3-1.png');
+      _buildingImages['tthouse']    = await _loadImg('assets/tthouse.png');
+      _buildingImages['tthouse-1']  = await _loadImg('assets/tthouse1-1.png');
+      _buildingImages['modernhouse']    = await _loadImg('assets/modernhouse.png');
+      _buildingImages['modernhouse-1']  = await _loadImg('assets/modernhouse1-1.png');
+      _buildingImages['landmark2']      = await _loadImg('assets/landmark2.png');
+      _buildingImages['landmark2-1']    = await _loadImg('assets/landmark2-1.png');
+      _buildingImages['house']          = await _loadImg('assets/house1.png');
       _buildingImages['house-1']    = await _loadImg('assets/house1-1.png');
       _buildingImages['park']       = await _loadImg('assets/park.png');
       _buildingImages['park-1']     = await _loadImg('assets/park1-1.png');
@@ -219,7 +386,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
       _buildingImages['apt-1']      = await _loadImg('assets/apt1-1.png');
       setState(() {});
     } catch (e) {
-      debugPrint("❌ 로드 실패: $e");
+      debugPrint("\u274c \ub85c\ub4dc \uc2e4\ud328: $e");
     }
   }
 
@@ -248,8 +415,12 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
 
   void _confirmPlace() {
     if (_previewTile == null || _selectedBuilding == null || _isLandMode) return;
-    context.read<GameProvider>().placeBuilding(
-        _previewTile!, _selectedBuilding!, _previewRotated);
+    final isTutorialHouse = _selectedBuilding == 'tthouse';
+    final provider = context.read<GameProvider>();
+    provider.placeBuilding(_previewTile!, _selectedBuilding!, _previewRotated);
+    if (isTutorialHouse && provider.tutorialStep == 3) {
+      provider.nextTutorialStep(); // → step 4
+    }
     setState(() { _previewTile = null; _previewRotated = false; _selectedBuilding = null; });
   }
 
@@ -341,20 +512,41 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("🏘 마을 전경"),
+        title: const Text("🏙 마을 전경"),
         actions: [
           IconButton(
             icon: const Icon(Icons.center_focus_strong),
             tooltip: '뷰 초기화',
             onPressed: _resetView,
           ),
+          IconButton(
+            icon: const Icon(Icons.camera_alt_outlined),
+            tooltip: '캡처',
+            onPressed: () {
+              // TODO: 캡처 기능
+            },
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.construction,
+              color: _demolishMode ? Colors.red : null,
+            ),
+            tooltip: '철거',
+            onPressed: () => setState(() {
+              _demolishMode = !_demolishMode;
+              if (_demolishMode) _resetSelection();
+            }),
+          ),
         ],
       ),
-      body: Column(
+      body: Stack(
+        children: [
+        Column(
         children: [
           Expanded(
             flex: 6,
             child: Stack(
+              clipBehavior: Clip.none,
               children: [
                 Container(
                   decoration: const BoxDecoration(
@@ -367,7 +559,11 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                   ),
                   child: _groundImage == null
                   ? const Center(child: CircularProgressIndicator())
-                  : InteractiveViewer(
+                  : GestureDetector(
+                      onTapUp: _demolishMode
+                          ? (d) => _onDemolishTap(d, tileAnchors, provider)
+                          : null,
+                      child: InteractiveViewer(
                       transformationController: _transformController,
                       constrained: false,
                       boundaryMargin: const EdgeInsets.all(double.infinity),
@@ -400,23 +596,18 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                               }(),
                             ],
                             AnimatedBuilder(
-                              animation: _carController,
+                              animation: Listenable.merge([_carController, _dogController]),
                               builder: (context, _) {
-                                final routes = _allCarRoutes(groundGrid);
-                                final t1 = _carController.value;
-
-                                // 각 경로별 차 위치 계산
-                                final carPositions = routes.map((r) {
-                                  final t = (t1 + r.phase) % 1.0;
-                                  final raw = _interpolate(r.pts, t);
-                                  return (pos: Offset(raw.dx + _originX, raw.dy), isFlip: r.isFlip);
-                                }).toList();
+                                // 각각 독립 메서드로 위치 계산
+                                final carPositions = _computeCarPositions(groundGrid);
+                                final dogPositions = _computeDogPositions(groundGrid, population);
 
                                 final sorted = tileAnchors.keys.toList()
                                   ..sort((a, b) => tileAnchors[a]!.dy.compareTo(tileAnchors[b]!.dy));
 
                                 final drawnCars = List.filled(carPositions.length, false);
-                                final widgets = <Widget>[];
+                                final drawnDogs = List.filled(dogPositions.length, false);
+                                final widgets   = <Widget>[];
 
                                 for (final slot in expansionSlots) {
                                   final nx = slot.$1;
@@ -455,41 +646,54 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                                   for (int ci = 0; ci < carPositions.length; ci++) {
                                     if (!drawnCars[ci] && carPositions[ci].pos.dy < anchor.dy) {
                                       drawnCars[ci] = true;
-                                      final img = carPositions[ci].isFlip ? _carFlipImage : _carImage;
+                                      final img = carPositions[ci].img;
                                       if (img != null) widgets.add(_buildCar(carPositions[ci].pos, img));
                                     }
                                   }
+                                  for (int di = 0; di < dogPositions.length; di++) {
+                                    if (!drawnDogs[di] && dogPositions[di].pos.dy < anchor.dy) {
+                                      drawnDogs[di] = true;
+                                      final img = dogPositions[di].img;
+                                      if (img != null) widgets.add(_buildDog(dogPositions[di].pos, img, dogPositions[di].frame));
+                                    }
+                                  }
 
-                                  if (!_isLandMode && _selectedBuilding != null && _previewTile != idx) {
+                                  // 설치 하이라이트 (철거 모드 아닐 때만)
+                                  if (!_demolishMode && !_isLandMode &&
+                                      _selectedBuilding != null && _previewTile != idx) {
                                     widgets.add(Positioned(
                                       left: anchor.dx - _bw / 2,
                                       top: anchor.dy - _th / 2,
                                       child: GestureDetector(
                                         onTap: () => _onTileTap(idx),
                                         child: CustomPaint(
-                                          painter: _HighlightPainter(
-                                              filled: placedBuildings.containsKey(idx)),
+                                          painter: _HighlightPainter(filled: placedBuildings.containsKey(idx)),
                                           size: Size(_bw, _th),
                                         ),
                                       ),
                                     ));
                                   }
 
+                                  // 건물 그리기
                                   if (_previewTile != idx &&
                                       placedBuildings.containsKey(idx) &&
                                       _buildingImages[_getBuildingKey(provider, idx)] != null) {
                                     final key = _getBuildingKey(provider, idx);
                                     final bh  = _getBuildingH(key);
+                                    // 철거 모드면 IgnorePointer로 터치 통과
+                                    Widget building = CustomPaint(
+                                      painter: _TilePainter(image: _buildingImages[key]!),
+                                      size: Size(_bw, bh),
+                                    );
+                                    final shouldIgnore = !_isLandMode && _selectedBuilding != null;
                                     widgets.add(Positioned(
                                       left: anchor.dx - _bw / 2,
                                       top: anchor.dy - bh + _th / 2,
-                                      child: CustomPaint(
-                                        painter: _TilePainter(image: _buildingImages[key]!),
-                                        size: Size(_bw, bh),
-                                      ),
+                                      child: shouldIgnore ? IgnorePointer(child: building) : building,
                                     ));
                                   }
 
+                                  // 프리뷰 건물
                                   if (!_isLandMode &&
                                       _previewTile == idx &&
                                       _selectedBuilding != null &&
@@ -512,8 +716,14 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
 
                                 for (int ci = 0; ci < carPositions.length; ci++) {
                                   if (!drawnCars[ci]) {
-                                    final img = carPositions[ci].isFlip ? _carFlipImage : _carImage;
+                                    final img = carPositions[ci].img;
                                     if (img != null) widgets.add(_buildCar(carPositions[ci].pos, img));
+                                  }
+                                }
+                                for (int di = 0; di < dogPositions.length; di++) {
+                                  if (!drawnDogs[di]) {
+                                    final img = dogPositions[di].img;
+                                    if (img != null) widgets.add(_buildDog(dogPositions[di].pos, img, dogPositions[di].frame));
                                   }
                                 }
 
@@ -542,13 +752,14 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                         ),
                       ),
                     ),
-                ),
+                  ), // GestureDetector
+                ), // Container
                 Positioned(
                   top: 12, right: 12,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      _statCapsule("👥 $population명", const Color(0xFF4A7FBD)),
+                      _statCapsule("\ud83d\udc65 $population\uba85", const Color(0xFF4A7FBD)),
                       const SizedBox(height: 6),
                       _statCapsule(
                         "${_happinessEmoji(happiness)} $happiness%",
@@ -568,6 +779,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
           SafeArea(
             top: false,
             child: Container(
+              key: _bottomPanelKey,
               width: double.infinity,
               color: Colors.brown[100],
               padding: const EdgeInsets.only(top: 12, bottom: 8),
@@ -575,14 +787,14 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    "아이템 선택",
+                    "\uc544\uc774\ud15c \uc120\ud0dd",
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   if (_selectedBuilding != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text(
-                        _isLandMode ? "확장할 땅을 탭하세요!" : "타일을 탭해서 배치하세요!",
+                        _isLandMode ? "\ud655\uc7a5\ud560 \ub545\uc744 \ud0ed\ud558\uc138\uc694!" : "\ud0c0\uc77c\uc744 \ud0ed\ud574\uc11c \ubc30\uce58\ud558\uc138\uc694!",
                         style: TextStyle(
                           fontSize: 12,
                           color: _isLandMode ? Colors.orange[700] : Colors.blue[600],
@@ -595,7 +807,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                     child: !hasItems
                         ? Center(
                             child: Text(
-                              "상점에서 아이템을 구매하세요!",
+                              "\uc0c1\uc810\uc5d0\uc11c \uc544\uc774\ud15c\uc744 \uad6c\ub9e4\ud558\uc138\uc694!",
                               style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                             ),
                           )
@@ -619,13 +831,64 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
                   if (_selectedBuilding != null)
                     TextButton(
                       onPressed: _resetSelection,
-                      child: const Text("선택 취소"),
+                      child: const Text("\uc120\ud0dd \ucde8\uc18c"),
                     ),
                 ],
               ),
             ),
           ),
-        ],
+        ], // Column
+        ),
+
+        // 튜토리얼 오버레이
+        Consumer<GameProvider>(
+          builder: (context, provider, _) {
+            final step = provider.tutorialStep;
+            if (step == 3) {
+              // 완전 IgnorePointer → 아이템 선택 방해 안 함
+              return IgnorePointer(
+                child: Positioned(
+                  bottom: 0, left: 0, right: 0,
+                  child: _tutorialDialog(
+                    "빨간 지붕 집을 눌러서 배치해보자!\n아이템 창에서 집을 선택해봐!",
+                  ),
+                ),
+              );
+            } else if (step == 4) {
+              return GestureDetector(
+                onTap: provider.completeTutorial,
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.01),
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: _tutorialDialog("첫 집이 생겼어! 🏠\n이제 본격적으로 시작해보자!"),
+                  ),
+                ),
+              );
+            }
+            return const SizedBox();
+          },
+        ),
+      ], // Stack
+      ),
+    );
+  }
+
+  Widget _tutorialDialog(String message) {
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+    return Container(
+      margin: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomPad),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF0C8),
+        border: Border.all(color: const Color(0xFF3D5C28), width: 3),
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(
+          fontSize: 14, color: Color(0xFF3D5C28),
+          height: 1.6, fontFamily: 'NeoDunggeunmo',
+        ),
       ),
     );
   }
@@ -666,9 +929,9 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
             const Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Center(child: Text("🏞", style: TextStyle(fontSize: 28))),
+                Center(child: Text("\ud83c\udfde", style: TextStyle(fontSize: 28))),
                 SizedBox(height: 2),
-                Center(child: Text("확장권", style: TextStyle(fontSize: 11))),
+                Center(child: Text("\ud655\uc7a5\uad8c", style: TextStyle(fontSize: 11))),
               ],
             ),
             if (count > 1)
@@ -719,6 +982,7 @@ class _TownScreenState extends State<TownScreen> with TickerProviderStateMixin {
         _previewTile = null;
         _previewRotated = false;
         _previewLand = null;
+        _demolishMode = false;
       }),
       child: Container(
         decoration: BoxDecoration(
@@ -775,13 +1039,10 @@ class _HighlightPainter extends CustomPainter {
       ..lineTo(size.width / 2, size.height)
       ..lineTo(0, size.height / 2)
       ..close();
-    canvas.drawPath(path, Paint()
-      ..color = (filled ? Colors.green : Colors.yellow).withValues(alpha: 0.4)
-      ..style = PaintingStyle.fill);
-    canvas.drawPath(path, Paint()
-      ..color = filled ? Colors.green[700]! : Colors.yellow[700]!
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2);
+    final fillC  = filled ? Colors.green : Colors.yellow;
+    final strokeC = filled ? Colors.green[700]! : Colors.yellow[700]!;
+    canvas.drawPath(path, Paint()..color = fillC.withValues(alpha: 0.4)..style = PaintingStyle.fill);
+    canvas.drawPath(path, Paint()..color = strokeC..style = PaintingStyle.stroke..strokeWidth = 2);
   }
 
   @override
